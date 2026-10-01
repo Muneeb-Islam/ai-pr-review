@@ -1,0 +1,9 @@
+dist
+node_modules
+coverage
+package-lock.json
+# Planning docs are hand-maintained
+docs
+phases
+PHASES.md
+*.md

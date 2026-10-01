@@ -1,0 +1,36 @@
+# Copy to .github/workflows/ai-pr-review.yml in the repository you want reviewed.
+name: AI PR Review
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+  issue_comment: # Optional: enables the /ai-review command for maintainers.
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+concurrency:
+  group: ai-pr-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    # Never use pull_request_target here: this job must not run with secrets on fork code.
+    steps:
+      - uses: actions/checkout@v4 # Pin by commit SHA in production use.
+      - uses: your-org/ai-pr-review-assistant@v1 # Placeholder name; see src/constants.ts.
+        with:
+          provider: deepseek
+          pr_number: ${{ inputs.pr_number }}
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}

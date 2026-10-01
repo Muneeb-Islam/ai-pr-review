@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=../schemas/ai-pr-review.schema.json
+# Example configuration. Action inputs override this file; this file overrides defaults.
+provider: deepseek # anthropic | openai | deepseek
+model: deepseek-chat # Placeholder: confirm the current model ID in DeepSeek's docs (decision log, open item).
+# base_url:                # Optional OpenAI-compatible endpoint override.
+
+review:
+  mode: comment_only # comment_only | warn | fail_on_threshold
+  target_branches: [main, master]
+  draft_behavior: summary_only # summary_only | full | skip
+  minimum_severity: medium
+  minimum_confidence: 0.8
+  max_changed_files: 40
+  max_patch_characters: 120000
+  max_inline_comments: 20
+
+agents:
+  code_review: true
+  test_coverage: true
+  security: true
+  final_review: false
+
+limits:
+  concurrency: 3
+  max_requests: 20
+  max_total_tokens: 400000
+  request_timeout_ms: 120000
+
+coverage:
+  lcov_path: coverage/lcov.info
+
+fork_prs: skip # skip | read_only (read_only is not honoured yet)
+
+ignore:
+  - "dist/**"
+  - "coverage/**"
+  - "**/*.lock"
+
+secret_paths: # Added to the built-in secret patterns.
+  - "**/.env*"
+
+instructions: "" # Optional extra review guidance (treated as untrusted).
