@@ -1,0 +1,302 @@
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import type { RunStatus, RunTrigger, Severity, TokenUsage } from "@ai-pr-review/shared";
+import type { Database } from "../client";
+import { IllegalTransitionError, InvalidInputError, NotFoundError } from "../errors";
+import { isTerminalStatus, statusesThatCanReach } from "../lifecycle";
+import { afterCursor, clampLimit, toPage, type Page } from "../pagination";
+import { findings, repositories, reviewRuns } from "../schema";
+import { inInstallations, isUuid, type InstallationIds } from "../scope";
+import type { Run } from "../types";
+
+export interface NewRun {
+  repoId: string;
+  prNumber: number;
+  headSha: string;
+  baseSha: string;
+  baseRef: string;
+  trigger: RunTrigger;
+  triggeredBy?: string;
+  /** The run this one re-runs (dashboard re-run, AC-21). Must belong to the same installation. */
+  parentRunId?: string;
+  /**
+   * Record the run as `skipped` straight away (a guard stopped it: draft, fork, quota, size...).
+   * The reason is shown to users so they can see why a PR was not reviewed (design §7).
+   */
+  skip?: { reason: string };
+  /** Clock override (defaults to now); used by the seed script and tests. */
+  at?: Date;
+}
+
+/** Creates a run in `queued` (or directly `skipped`). The repository must belong to the installation. */
+export async function createRun(db: Database, installationId: string, input: NewRun): Promise<Run> {
+  if (!isUuid(installationId) || !isUuid(input.repoId)) throw new NotFoundError("Repository");
+  if (!Number.isInteger(input.prNumber) || input.prNumber < 1) {
+    throw new InvalidInputError("prNumber must be a positive integer");
+  }
+  if (input.skip && input.skip.reason.trim() === "") {
+    throw new InvalidInputError("A skipped run needs a reason");
+  }
+
+  const [repo] = await db
+    .select({ id: repositories.id })
+    .from(repositories)
+    .where(and(eq(repositories.id, input.repoId), eq(repositories.installationId, installationId)));
+  if (!repo) throw new NotFoundError("Repository");
+
+  if (input.parentRunId !== undefined) {
+    const parent = isUuid(input.parentRunId)
+      ? await getRunInInstallation(db, installationId, input.parentRunId)
+      : undefined;
+    if (!parent) throw new NotFoundError("Parent run");
+  }
+
+  const at = input.at ?? new Date();
+  const [row] = await db
+    .insert(reviewRuns)
+    .values({
+      installationId,
+      repoId: input.repoId,
+      prNumber: input.prNumber,
+      headSha: input.headSha,
+      baseSha: input.baseSha,
+      baseRef: input.baseRef,
+      trigger: input.trigger,
+      triggeredBy: input.triggeredBy ?? null,
+      parentRunId: input.parentRunId ?? null,
+      queuedAt: at,
+      ...(input.skip
+        ? { status: "skipped" as const, statusReason: input.skip.reason, finishedAt: at }
+        : {}),
+    })
+    .returning();
+  return row!;
+}
+
+async function getRunInInstallation(
+  db: Database,
+  installationId: string,
+  runId: string,
+): Promise<Run | undefined> {
+  const [row] = await db
+    .select()
+    .from(reviewRuns)
+    .where(and(eq(reviewRuns.id, runId), eq(reviewRuns.installationId, installationId)));
+  return row;
+}
+
+export async function getRun(
+  db: Database,
+  installationIds: InstallationIds,
+  runId: string,
+): Promise<Run | undefined> {
+  if (!isUuid(runId)) return undefined;
+  const [row] = await db
+    .select()
+    .from(reviewRuns)
+    .where(
+      and(eq(reviewRuns.id, runId), inInstallations(reviewRuns.installationId, installationIds)),
+    );
+  return row;
+}
+
+export interface TransitionOptions {
+  /** Required when moving to `skipped`; recommended for `failed`, `superseded` and `cancelled`. */
+  reason?: string;
+  warnings?: string[];
+  usage?: TokenUsage;
+  /** Clock override (defaults to now). */
+  at?: Date;
+}
+
+/**
+ * The only way a run's status changes after creation. It enforces scope §5.1 (see `lifecycle.ts`),
+ * sets `started_at` when the run starts and `finished_at` when it reaches a terminal status, and does
+ * so in a single conditional UPDATE, so two writers racing on the same run cannot both win.
+ *
+ * Throws `NotFoundError` if the run is not in `installationId`, `IllegalTransitionError` otherwise.
+ */
+export async function transitionRun(
+  db: Database,
+  installationId: string,
+  runId: string,
+  to: RunStatus,
+  options: TransitionOptions = {},
+): Promise<Run> {
+  if (!isUuid(installationId) || !isUuid(runId)) throw new NotFoundError("Run");
+  if (to === "skipped" && !options.reason?.trim()) {
+    throw new InvalidInputError("A skipped run needs a reason");
+  }
+
+  const allowedFrom = statusesThatCanReach(to);
+  const at = options.at ?? new Date();
+
+  if (allowedFrom.length > 0) {
+    const [row] = await db
+      .update(reviewRuns)
+      .set({
+        status: to,
+        ...(options.reason !== undefined ? { statusReason: options.reason } : {}),
+        ...(options.warnings !== undefined ? { warnings: options.warnings } : {}),
+        ...(options.usage !== undefined ? { usage: options.usage } : {}),
+        ...(to === "running" ? { startedAt: at } : {}),
+        ...(isTerminalStatus(to) ? { finishedAt: at } : {}),
+      })
+      .where(
+        and(
+          eq(reviewRuns.id, runId),
+          eq(reviewRuns.installationId, installationId),
+          inArray(reviewRuns.status, allowedFrom),
+        ),
+      )
+      .returning();
+    if (row) return row;
+  }
+
+  // No row updated: either the run is not ours, or its current status cannot move to `to`.
+  const current = await getRunInInstallation(db, installationId, runId);
+  if (!current) throw new NotFoundError("Run");
+  throw new IllegalTransitionError(current.status, to);
+}
+
+export interface RunDetailsUpdate {
+  checkRunId?: number;
+  summaryCommentId?: number;
+  warnings?: string[];
+  usage?: TokenUsage;
+}
+
+/** Updates run metadata that is not part of the lifecycle (GitHub ids, warnings, usage). Never touches status. */
+export async function updateRunDetails(
+  db: Database,
+  installationId: string,
+  runId: string,
+  update: RunDetailsUpdate,
+): Promise<Run> {
+  if (!isUuid(installationId) || !isUuid(runId)) throw new NotFoundError("Run");
+  const set = {
+    ...(update.checkRunId !== undefined ? { checkRunId: update.checkRunId } : {}),
+    ...(update.summaryCommentId !== undefined ? { summaryCommentId: update.summaryCommentId } : {}),
+    ...(update.warnings !== undefined ? { warnings: update.warnings } : {}),
+    ...(update.usage !== undefined ? { usage: update.usage } : {}),
+  };
+  if (Object.keys(set).length === 0) {
+    const current = await getRunInInstallation(db, installationId, runId);
+    if (!current) throw new NotFoundError("Run");
+    return current;
+  }
+  const [row] = await db
+    .update(reviewRuns)
+    .set(set)
+    .where(and(eq(reviewRuns.id, runId), eq(reviewRuns.installationId, installationId)))
+    .returning();
+  if (!row) throw new NotFoundError("Run");
+  return row;
+}
+
+export interface RunFilters {
+  repoId?: string;
+  status?: RunStatus | readonly RunStatus[];
+  baseRef?: string;
+  triggeredBy?: string;
+  /** Inclusive bounds on `queued_at`. */
+  from?: Date;
+  to?: Date;
+  /** Only runs with at least one (non-suppressed) finding of this severity. */
+  severity?: Severity;
+  cursor?: string;
+  limit?: number;
+}
+
+/** Runs of the caller's installations, newest first, in stable `(queued_at, id)` pages. */
+export async function listRuns(
+  db: Database,
+  installationIds: InstallationIds,
+  filters: RunFilters = {},
+): Promise<Page<Run>> {
+  const limit = clampLimit(filters.limit);
+  const statuses =
+    filters.status === undefined
+      ? undefined
+      : ([] as RunStatus[]).concat(filters.status as RunStatus | RunStatus[]);
+  if (filters.repoId !== undefined && !isUuid(filters.repoId))
+    return { items: [], nextCursor: null };
+  if (statuses?.length === 0) return { items: [], nextCursor: null };
+
+  const rows = await db
+    .select()
+    .from(reviewRuns)
+    .where(
+      and(
+        inInstallations(reviewRuns.installationId, installationIds),
+        filters.repoId ? eq(reviewRuns.repoId, filters.repoId) : undefined,
+        statuses ? inArray(reviewRuns.status, statuses) : undefined,
+        filters.baseRef ? eq(reviewRuns.baseRef, filters.baseRef) : undefined,
+        filters.triggeredBy ? eq(reviewRuns.triggeredBy, filters.triggeredBy) : undefined,
+        filters.from ? gte(reviewRuns.queuedAt, filters.from) : undefined,
+        filters.to ? lte(reviewRuns.queuedAt, filters.to) : undefined,
+        filters.severity
+          ? sql`exists (select 1 from ${findings}
+              where ${findings.runId} = ${reviewRuns.id}
+                and ${findings.installationId} = ${reviewRuns.installationId}
+                and ${findings.severity} = ${filters.severity}
+                and ${findings.suppressedReason} is null)`
+          : undefined,
+        filters.cursor
+          ? afterCursor(reviewRuns.queuedAt, reviewRuns.id, filters.cursor)
+          : undefined,
+      ),
+    )
+    .orderBy(desc(reviewRuns.queuedAt), desc(reviewRuns.id))
+    .limit(limit + 1);
+
+  return toPage(rows, limit, (r) => ({ at: r.queuedAt, id: r.id }));
+}
+
+/** Runs for one pull request (any head SHA unless given), newest first. Used for dedupe and supersede. */
+export async function listRunsForPullRequest(
+  db: Database,
+  installationIds: InstallationIds,
+  repoId: string,
+  prNumber: number,
+  options: { headSha?: string; status?: RunStatus | readonly RunStatus[] } = {},
+): Promise<Run[]> {
+  if (!isUuid(repoId)) return [];
+  const statuses =
+    options.status === undefined
+      ? undefined
+      : ([] as RunStatus[]).concat(options.status as RunStatus | RunStatus[]);
+  if (statuses?.length === 0) return [];
+  return db
+    .select()
+    .from(reviewRuns)
+    .where(
+      and(
+        inInstallations(reviewRuns.installationId, installationIds),
+        eq(reviewRuns.repoId, repoId),
+        eq(reviewRuns.prNumber, prNumber),
+        options.headSha ? eq(reviewRuns.headSha, options.headSha) : undefined,
+        statuses ? inArray(reviewRuns.status, statuses) : undefined,
+      ),
+    )
+    .orderBy(desc(reviewRuns.queuedAt), desc(reviewRuns.id));
+}
+
+/** The most recent run of each repository (repository list "last run" column). */
+export async function getLatestRunPerRepo(
+  db: Database,
+  installationIds: InstallationIds,
+  repoIds?: readonly string[],
+): Promise<Run[]> {
+  const ids = repoIds?.filter(isUuid);
+  if (ids?.length === 0) return [];
+  return db
+    .selectDistinctOn([reviewRuns.repoId])
+    .from(reviewRuns)
+    .where(
+      and(
+        inInstallations(reviewRuns.installationId, installationIds),
+        ids ? inArray(reviewRuns.repoId, ids) : undefined,
+      ),
+    )
+    .orderBy(reviewRuns.repoId, desc(reviewRuns.queuedAt), desc(reviewRuns.id));
+}
