@@ -69,7 +69,13 @@ export default tseslint.config(
   {
     files: ["**/scripts/**"],
     languageOptions: {
-      globals: { console: "readonly", process: "readonly", setTimeout: "readonly" },
+      globals: {
+        console: "readonly",
+        process: "readonly",
+        setTimeout: "readonly",
+        fetch: "readonly",
+        URL: "readonly",
+      },
     },
     rules: { "no-console": "off" },
   },

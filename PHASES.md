@@ -52,7 +52,8 @@ Read first: [docs/scope.md](docs/scope.md) (what we build), [docs/design.md](doc
 | 0 | Documents written; waiting for owner review of assumed decisions 15–22 |
 | 1 | The old Action-based foundation is committed (`b77c898`). Phase 1 now means migrating it into the monorepo. |
 | 2 | Done on branch `phase-2-database` (schema, migrations, tenant-scoped access, seed, tests); CI wiring not yet run on GitHub |
-| 3–16 | Not started |
+| 3 | Implemented on branch `phase-3-github-app-webhooks` (webhook endpoint, installation sync, PR/comment/check_run handling, App auth, replay and registration scripts, setup doc, tests). Still to do by the owner: register the development App, create and install the sandbox repo, and see a real PR produce a `queued` run (see the phase file) |
+| 4–16 | Not started |
 
 ## Acceptance traceability
 

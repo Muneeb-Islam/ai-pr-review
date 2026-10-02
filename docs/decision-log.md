@@ -13,7 +13,7 @@ Recorded 2026-10-01 (decisions 1–10) and 2026-10-02 (decisions 11–20, scope 
 | 5 | Language scope | Node.js/TypeScript only | Confirmed |
 | 6 | Coverage source | LCOV (Jest/Vitest) only | Confirmed. Now read from a GitHub Actions artifact (decision 19). |
 | 7 | Security tooling | AI-only; `ScannerAdapter` interface only | Confirmed |
-| 8 | Sandbox repo | A sandbox for end-to-end tests is needed. The GitHub App (Phase 3) must be installed on a sandbox repo. | Open until Phase 3 |
+| 8 | Sandbox repo | A sandbox for end-to-end tests is needed. The GitHub App (Phase 3) must be installed on a sandbox repo. | Procedure documented in `github-app-setup.md` (Phase 3). Closes when the owner creates the repo and installs the App; record its name here. |
 | 9 | Coding agent | Claude Code, one phase per session | Confirmed |
 | 10 | Action / repo name | Placeholder `ai-pr-review-assistant`, kept in one place | Deferred |
 

@@ -21,6 +21,8 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspaces --if-present",
     "schema": "npm run schema -w @ai-pr-review/shared",
+    "webhook:replay": "node --env-file-if-exists=.env scripts/replay-webhook.mjs",
+    "github-app:register": "node --env-file-if-exists=.env scripts/register-github-app.mjs",
     "db:up": "docker compose up -d --wait postgres redis",
     "db:down": "docker compose down",
     "db:generate": "npm run db:generate -w @ai-pr-review/db",

@@ -2,7 +2,7 @@
 
 A GitHub App that reviews pull requests with AI agents (code review, test coverage, security), keeps run history in PostgreSQL and shows it in a web dashboard.
 
-> **Status: Phase 2 (database and data model).** The review engine, webhooks and dashboard screens are built in later phases. Today the repo contains the shared types and config schema, the routing guards, the GitHub client, the PostgreSQL schema with tenant-scoped data access, and stub apps that start and report health. See [PHASES.md](PHASES.md) for the plan, [docs/scope.md](docs/scope.md) for what we build and [docs/design.md](docs/design.md) for how.
+> **Status: Phase 3 (GitHub App and webhooks).** The review engine, queue worker and dashboard screens are built in later phases. Today the repo contains the shared types and config schema, the routing guards, GitHub App authentication, the PostgreSQL schema with tenant-scoped data access, and an api that verifies webhooks and records `queued` or `skipped` runs. See [PHASES.md](PHASES.md) for the plan, [docs/scope.md](docs/scope.md) for what we build and [docs/design.md](docs/design.md) for how.
 
 ## Prerequisites
 
@@ -19,6 +19,8 @@ npm run db:migrate       # apply database migrations
 npm run db:seed          # optional: demo installation, repos, runs and findings
 npm run dev              # api (3000), worker, web (5173)
 ```
+
+The api needs a GitHub App (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`). Register a development App and install it on a sandbox repository with [docs/github-app-setup.md](docs/github-app-setup.md); without a real App you can still exercise the webhook endpoint with `npm run webhook:replay`.
 
 Check that it works:
 
@@ -47,19 +49,22 @@ Each app validates its environment at startup. If something is missing it exits 
 | `npm run db:generate`         | Generate a migration after editing `packages/db/src/schema.ts`       |
 | `npm run db:seed`             | Load (or reload) the demo installation for dashboard development     |
 | `npm run schema`              | Regenerate `packages/shared/schemas/ai-pr-review.schema.json`        |
+| `npm run webhook:replay`      | Send a saved webhook payload with a valid signature to the local api |
+| `npm run github-app:register` | Register a development GitHub App from a manifest                    |
 
 ## Repository layout
 
 ```
 apps/
-  api/        Fastify server: /healthz, /readyz (webhooks, auth, REST, SSE come later)
+  api/        Fastify server: /healthz, /readyz, POST /webhooks/github (auth, REST, SSE come later)
   worker/     Queue worker stub: connects to Redis and idles
   web/        React + Vite dashboard stub
 packages/
   shared/     types, zod schemas (config, env), logger with redaction, constants
-  core/       review engine: routing guards, GitHub client (no HTTP, no database)
+  core/       review engine: routing guards, GitHub App auth and client (no HTTP server, no database)
   db/         Drizzle schema, migrations, seed, tenant-scoped data access (+ `system` module)
-docs/         scope, design, decision log, PRD
+docs/         scope, design, decision log, PRD, GitHub App setup
+fixtures/     saved webhook payloads (tests and the replay script)
 phases/       one brief per implementation phase
 examples/     ai-pr-review.yml, the repo-level config example
 docker-compose.yml   PostgreSQL + Redis for local development
