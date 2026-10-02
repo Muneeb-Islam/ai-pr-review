@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ConfigError, mergeConfig, parseConfigYaml, type RawConfig } from "./loader";
+import {
+  ConfigError,
+  mergeConfig,
+  parseConfigYaml,
+  resolveRepoConfig,
+  type RawConfig,
+} from "./loader";
 
 const dashboardDefault: RawConfig = { provider: "deepseek", model: "m" };
 
@@ -212,5 +218,32 @@ describe("config: dashboard-only keys", () => {
   it("reports every dashboard-only key found, and does not apply the file", () => {
     const err = configError(() => load("provider: openai\nmodel: x\nlimits:\n  concurrency: 99\n"));
     expect(err.problems.map((p) => p.split(":")[0])).toEqual(["provider", "model", "limits"]);
+  });
+});
+
+describe("resolveRepoConfig (routing settings without a provider)", () => {
+  it("applies defaults when the dashboard has no settings", () => {
+    const cfg = resolveRepoConfig({});
+    expect(cfg.fork_prs).toBe("skip");
+    expect(cfg.review.target_branches).toEqual(["main", "master"]);
+    expect(cfg.review.draft_behavior).toBe("summary_only");
+  });
+
+  it("applies stored overrides and ignores dashboard-only keys", () => {
+    const cfg = resolveRepoConfig({
+      fork_prs: "review",
+      review: { target_branches: ["release"] },
+      provider: "deepseek",
+      model: "m",
+      limits: { concurrency: 1 },
+    });
+    expect(cfg.fork_prs).toBe("review");
+    expect(cfg.review.target_branches).toEqual(["release"]);
+    expect(cfg.review.draft_behavior).toBe("summary_only");
+  });
+
+  it("throws a ConfigError naming the invalid key", () => {
+    expect(() => resolveRepoConfig({ fork_prs: "maybe" })).toThrow(ConfigError);
+    expect(() => resolveRepoConfig({ fork_prs: "maybe" })).toThrow(/fork_prs/);
   });
 });

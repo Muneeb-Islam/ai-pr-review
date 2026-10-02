@@ -60,7 +60,13 @@ export const serverEnvShape = {
   RETENTION_DAYS: z.coerce.number().int().positive().default(90),
   QUOTA_RUNS_PER_DAY: z.coerce.number().int().positive().default(200),
   QUOTA_TOKENS_PER_DAY: z.coerce.number().int().positive().default(2_000_000),
-  // Later phases (3: GitHub App, 4: auth and credentials):
+  /** Largest webhook body the api accepts (GitHub's own cap is 25 MB; real events are far smaller). */
+  WEBHOOK_MAX_BODY_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(5 * 1024 * 1024),
+  // GitHub App (required by the api since Phase 3) and later phases (4: auth and credentials):
   GITHUB_APP_ID: z.string().min(1).optional(),
   GITHUB_APP_PRIVATE_KEY: z.string().min(1).optional(),
   GITHUB_WEBHOOK_SECRET: z.string().min(1).optional(),

@@ -1,7 +1,13 @@
 import { parse as parseYaml, YAMLParseError } from "yaml";
 import type { z } from "zod";
 import { REPO_CONFIG_PATH } from "../constants";
-import { configSchema, SENSITIVE_CONFIG_KEYS, type ResolvedConfig } from "./schema";
+import {
+  configSchema,
+  repoConfigSchema,
+  SENSITIVE_CONFIG_KEYS,
+  type RepoConfig,
+  type ResolvedConfig,
+} from "./schema";
 
 export class ConfigError extends Error {
   constructor(
@@ -106,4 +112,24 @@ export function mergeConfig(dashboard: RawConfig, repoFile: RawConfig = {}): Res
     );
   }
   return resolveConfig(deepMerge(dropNulls(dashboard), dropNulls(repoFile)));
+}
+
+/**
+ * Resolves only the non-sensitive keys of a dashboard config (review, agents, coverage, fork_prs, ignore,
+ * secret_paths, instructions) with defaults applied. For code that needs routing or review settings but not
+ * a provider (webhook guards). Dashboard-only keys in `dashboard` are ignored here; `resolveConfig` and
+ * `mergeConfig` validate those. Throws `ConfigError` on invalid values.
+ */
+export function resolveRepoConfig(dashboard: RawConfig = {}): RepoConfig {
+  const raw: RawConfig = {};
+  for (const key of Object.keys(repoConfigSchema.shape)) {
+    if (key in dashboard) raw[key] = dashboard[key];
+  }
+  const result = repoConfigSchema.safeParse(dropNulls(raw));
+  if (result.success) return result.data;
+  const problems = formatIssues(result.error.issues, raw);
+  throw new ConfigError(
+    `Invalid configuration:\n${problems.map((p) => `  - ${p}`).join("\n")}`,
+    problems,
+  );
 }

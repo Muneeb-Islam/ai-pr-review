@@ -13,7 +13,11 @@ const MAX_RATE_LIMIT_RETRIES = 2;
  * Octokit with retry on transient errors and throttling on primary/secondary rate limits.
  * `token` is an installation access token (or any token for local tooling). It is never logged.
  */
-export function createGitHubClient(token: string, logger: Logger): GitHubClient {
+export function createGitHubClient(
+  token: string,
+  logger: Logger,
+  options: { fetch?: typeof fetch } = {},
+): GitHubClient {
   const onLimit =
     (message: string) =>
     (
@@ -33,6 +37,7 @@ export function createGitHubClient(token: string, logger: Logger): GitHubClient 
 
   return new ThrottledOctokit({
     auth: token,
+    ...(options.fetch ? { request: { fetch: options.fetch } } : {}),
     retry: { retries: 3 },
     throttle: {
       onRateLimit: onLimit("GitHub rate limit hit"),

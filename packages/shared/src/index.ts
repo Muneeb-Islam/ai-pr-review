@@ -6,3 +6,4 @@ export * from "./config/loader";
 export * from "./config/jsonSchema";
 export * from "./logger";
 export * from "./env";
+export * from "./queue";
