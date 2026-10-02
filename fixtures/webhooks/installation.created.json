@@ -1,0 +1,37 @@
+{
+  "action": "created",
+  "installation": {
+    "id": 1001,
+    "account": { "login": "acme", "id": 9919, "type": "Organization" },
+    "repository_selection": "selected",
+    "app_id": 424242,
+    "target_type": "Organization",
+    "permissions": {
+      "metadata": "read",
+      "contents": "read",
+      "pull_requests": "write",
+      "checks": "write",
+      "actions": "read"
+    },
+    "events": ["pull_request", "issue_comment", "check_run"],
+    "suspended_at": null
+  },
+  "repositories": [
+    {
+      "id": 2001,
+      "node_id": "R_kgDOExample",
+      "name": "widgets",
+      "full_name": "acme/widgets",
+      "private": true
+    },
+    {
+      "id": 2002,
+      "node_id": "R_kgDOExample2",
+      "name": "gadgets",
+      "full_name": "acme/gadgets",
+      "private": false
+    }
+  ],
+  "requester": null,
+  "sender": { "login": "octocat", "id": 583231, "type": "User" }
+}

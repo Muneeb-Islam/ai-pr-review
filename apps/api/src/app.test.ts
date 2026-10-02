@@ -52,7 +52,7 @@ describe("api health endpoints", () => {
 describe("api env", () => {
   it("fails with the NAMES of missing variables only", () => {
     expect(() => loadApiEnv({})).toThrow(
-      "Missing required environment variables: DATABASE_URL, REDIS_URL",
+      "Missing required environment variables: DATABASE_URL, GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_WEBHOOK_SECRET, REDIS_URL",
     );
   });
 
@@ -60,7 +60,11 @@ describe("api env", () => {
     const env = loadApiEnv({
       DATABASE_URL: "postgres://u:p@localhost:5432/db",
       REDIS_URL: "redis://localhost:6379",
+      GITHUB_APP_ID: "1",
+      GITHUB_APP_PRIVATE_KEY: "pem",
+      GITHUB_WEBHOOK_SECRET: "s",
     });
+    expect(env.WEBHOOK_MAX_BODY_BYTES).toBe(5 * 1024 * 1024);
     expect(env.PORT).toBe(3000);
     expect(env.HOST).toBe("127.0.0.1");
   });

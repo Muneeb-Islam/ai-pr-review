@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Fastify API: webhooks, auth, REST and SSE (health endpoints only for now)",
+  "description": "Fastify API: GitHub webhooks and health endpoints (auth, REST and SSE come later)",
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
     "build": "node ../../scripts/build-node.mjs",
@@ -11,10 +11,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-pr-review/core": "*",
+    "@ai-pr-review/db": "*",
     "@ai-pr-review/shared": "*",
     "fastify": "^5.0.0",
     "ioredis": "^5.0.0",
-    "pg": "^8.0.0"
+    "pg": "^8.0.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/pg": "^8.0.0"

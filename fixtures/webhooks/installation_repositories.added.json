@@ -1,0 +1,22 @@
+{
+  "action": "added",
+  "installation": {
+    "id": 1001,
+    "account": { "login": "acme", "id": 9919, "type": "Organization" },
+    "repository_selection": "selected",
+    "app_id": 424242
+  },
+  "repository_selection": "selected",
+  "repositories_added": [
+    {
+      "id": 2003,
+      "node_id": "R_kgDOExample3",
+      "name": "gizmos",
+      "full_name": "acme/gizmos",
+      "private": true
+    }
+  ],
+  "repositories_removed": [],
+  "requester": null,
+  "sender": { "login": "octocat", "id": 583231, "type": "User" }
+}

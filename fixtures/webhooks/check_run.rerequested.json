@@ -1,0 +1,22 @@
+{
+  "action": "rerequested",
+  "check_run": {
+    "id": 8800001,
+    "name": "AI PR Review",
+    "head_sha": "1111111111111111111111111111111111111111",
+    "status": "completed",
+    "conclusion": "success",
+    "app": { "id": 424242, "slug": "ai-pr-review-dev" },
+    "pull_requests": [{ "number": 7 }]
+  },
+  "repository": {
+    "id": 2001,
+    "name": "widgets",
+    "full_name": "acme/widgets",
+    "private": true,
+    "owner": { "login": "acme", "id": 9919, "type": "Organization" },
+    "default_branch": "main"
+  },
+  "installation": { "id": 1001 },
+  "sender": { "login": "maintainer", "id": 101, "type": "User" }
+}

@@ -1,0 +1,61 @@
+{
+  "action": "opened",
+  "number": 7,
+  "pull_request": {
+    "url": "https://api.github.com/repos/acme/widgets/pulls/7",
+    "id": 1900000007,
+    "number": 7,
+    "state": "open",
+    "locked": false,
+    "title": "Add retry to the HTTP client",
+    "user": { "login": "octocat", "id": 583231, "type": "User", "site_admin": false },
+    "body": "Retries idempotent requests with backoff.",
+    "draft": false,
+    "author_association": "MEMBER",
+    "head": {
+      "label": "acme:feature/retry",
+      "ref": "feature/retry",
+      "sha": "1111111111111111111111111111111111111111",
+      "user": { "login": "acme", "id": 9919, "type": "Organization" },
+      "repo": {
+        "id": 2001,
+        "name": "widgets",
+        "full_name": "acme/widgets",
+        "private": true,
+        "fork": false,
+        "default_branch": "main"
+      }
+    },
+    "base": {
+      "label": "acme:main",
+      "ref": "main",
+      "sha": "2222222222222222222222222222222222222222",
+      "user": { "login": "acme", "id": 9919, "type": "Organization" },
+      "repo": {
+        "id": 2001,
+        "name": "widgets",
+        "full_name": "acme/widgets",
+        "private": true,
+        "fork": false,
+        "default_branch": "main"
+      }
+    },
+    "merged": false,
+    "mergeable": null,
+    "changed_files": 3,
+    "additions": 42,
+    "deletions": 5
+  },
+  "repository": {
+    "id": 2001,
+    "node_id": "R_kgDOExample",
+    "name": "widgets",
+    "full_name": "acme/widgets",
+    "private": true,
+    "owner": { "login": "acme", "id": 9919, "type": "Organization" },
+    "default_branch": "main"
+  },
+  "organization": { "login": "acme", "id": 9919 },
+  "installation": { "id": 1001, "node_id": "MDIzOkluc3RhbGxhdGlvbjEwMDE=" },
+  "sender": { "login": "octocat", "id": 583231, "type": "User" }
+}

@@ -1,9 +1,12 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { runCheck, type Checks } from "./health";
+import { webhookRoutes, type WebhookRouteOptions } from "./webhooks/route";
 
 export interface AppDeps {
   checks: Checks;
   checkTimeoutMs?: number;
+  /** The GitHub webhook endpoint. Tests of unrelated routes leave it out. */
+  webhooks?: WebhookRouteOptions;
 }
 
 /** Builds the HTTP app. No listening and no I/O here, so tests can use `app.inject()`. */
@@ -25,6 +28,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       checks: { postgres, redis },
     });
   });
+
+  const { webhooks } = deps;
+  if (webhooks) {
+    app.register(webhookRoutes, webhooks);
+    // Graceful shutdown: let deliveries that were already accepted finish.
+    app.addHook("onClose", async () => webhooks.service.idle());
+  }
 
   return app;
 }
