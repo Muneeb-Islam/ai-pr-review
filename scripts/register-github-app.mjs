@@ -45,6 +45,8 @@ function buildManifest({ name, webhookUrl, apiUrl, redirectUrl }) {
       metadata: "read",
       contents: "read",
       pull_requests: "write",
+      // GitHub refuses the issue_comment event (the /ai-review command) without this read permission.
+      issues: "read",
       checks: "write",
       actions: "read",
     },

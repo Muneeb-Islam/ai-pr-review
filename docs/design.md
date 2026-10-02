@@ -70,7 +70,7 @@ Migration of the existing Action code (commit `b77c898`):
 
 ## 4. GitHub App
 
-- **Permissions:** Metadata read; Contents read; Pull requests read & write; Checks read & write; Actions read (coverage artifacts). Nothing else.
+- **Permissions:** Metadata read; Contents read; Pull requests read & write; Checks read & write; Actions read (coverage artifacts); Issues read (GitHub requires it for the `issue_comment` event that carries `/ai-review`). Nothing else.
 - **Events:** `pull_request`, `issue_comment`, `check_run` (rerequested), `installation`, `installation_repositories`. Optional later: `workflow_run`.
 - **Webhook:** `POST /webhooks/github`. Verify `X-Hub-Signature-256` over the **raw body**; reject on mismatch; store `X-GitHub-Delivery`; respond `202` quickly; do all work asynchronously.
 - **Auth:** App JWT → installation access token (cached until shortly before expiry). Tokens are never persisted or logged.

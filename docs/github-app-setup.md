@@ -10,7 +10,7 @@ Exactly this, nothing more (design §4):
 
 | Setting            | Value                                                                                                                                  |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Repository permissions | Metadata: read · Contents: read · Pull requests: **read & write** · Checks: **read & write** · Actions: read (coverage artifacts, Phase 11) |
+| Repository permissions | Metadata: read · Contents: read · Issues: **read** (required by GitHub for the `issue_comment` event) · Pull requests: **read & write** · Checks: **read & write** · Actions: read (coverage artifacts, Phase 11) |
 | Subscribe to events | `pull_request`, `issue_comment`, `check_run`. (`installation` and `installation_repositories` are always delivered to an App.)        |
 | Webhook URL        | Where GitHub can reach `POST /webhooks/github` (step 2)                                                                                |
 | Webhook secret     | A random string, the same value as `GITHUB_WEBHOOK_SECRET`                                                                             |
@@ -40,7 +40,7 @@ Anything sent to a smee channel is readable by whoever knows the URL. Use it for
 npm run github-app:register -- --webhook-url https://smee.io/<your-channel>
 ```
 
-Open the printed `http://127.0.0.1:8787/` page, confirm the App on GitHub, and return to the terminal. The script uses GitHub's [App manifest flow](https://docs.github.com/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) with the permissions and events above, exchanges the one-time code for the App's credentials and writes them to `.env.github-app` (git-ignored, owner-only). Copy the five `GITHUB_*` values into `.env`. Useful options: `--name`, `--org <slug>` (create under an organization), `--api-url`, `--port`, `--out`.
+Open the printed `http://127.0.0.1:8787/` page, confirm the App on GitHub, and return to the terminal. The script uses GitHub's [App manifest flow](https://docs.github.com/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) with the permissions and events above, exchanges the one-time code for the App's credentials and writes them to `.env.github-app` (git-ignored, owner-only). Copy the five `GITHUB_*` values into `.env`. App names are unique across all of GitHub; if "AI PR Review (dev)" is taken, pass `--name` (or edit the name on the GitHub confirmation page). Useful options: `--name`, `--org <slug>` (create under an organization), `--api-url`, `--port`, `--out`.
 
 ### Option B: by hand
 
