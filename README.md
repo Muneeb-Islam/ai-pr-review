@@ -2,7 +2,7 @@
 
 A GitHub App that reviews pull requests with AI agents (code review, test coverage, security), keeps run history in PostgreSQL and shows it in a web dashboard.
 
-> **Status: Phase 1 (monorepo foundation).** The review engine, webhooks, database and dashboard screens are built in later phases. Today the repo contains the shared types and config schema, the routing guards, the GitHub client, and stub apps that start and report health. See [PHASES.md](PHASES.md) for the plan, [docs/scope.md](docs/scope.md) for what we build and [docs/design.md](docs/design.md) for how.
+> **Status: Phase 2 (database and data model).** The review engine, webhooks and dashboard screens are built in later phases. Today the repo contains the shared types and config schema, the routing guards, the GitHub client, the PostgreSQL schema with tenant-scoped data access, and stub apps that start and report health. See [PHASES.md](PHASES.md) for the plan, [docs/scope.md](docs/scope.md) for what we build and [docs/design.md](docs/design.md) for how.
 
 ## Prerequisites
 
@@ -15,6 +15,8 @@ A GitHub App that reviews pull requests with AI agents (code review, test covera
 npm install
 cp .env.example .env     # then adjust values; .env is git-ignored
 npm run db:up            # PostgreSQL + Redis, waits until healthy
+npm run db:migrate       # apply database migrations
+npm run db:seed          # optional: demo installation, repos, runs and findings
 npm run dev              # api (3000), worker, web (5173)
 ```
 
@@ -41,6 +43,9 @@ Each app validates its environment at startup. If something is missing it exits 
 | `npm run typecheck`           | `tsc --noEmit` in every package                                      |
 | `npm run check`               | lint + format check + typecheck + test + build (what CI runs)        |
 | `npm run db:up` / `db:down`   | Start / stop PostgreSQL and Redis                                    |
+| `npm run db:migrate`          | Apply pending migrations to `DATABASE_URL` (forward-only)            |
+| `npm run db:generate`         | Generate a migration after editing `packages/db/src/schema.ts`       |
+| `npm run db:seed`             | Load (or reload) the demo installation for dashboard development     |
 | `npm run schema`              | Regenerate `packages/shared/schemas/ai-pr-review.schema.json`        |
 
 ## Repository layout
@@ -53,7 +58,7 @@ apps/
 packages/
   shared/     types, zod schemas (config, env), logger with redaction, constants
   core/       review engine: routing guards, GitHub client (no HTTP, no database)
-  db/         empty stub until Phase 2 (Drizzle schema, migrations, data access)
+  db/         Drizzle schema, migrations, seed, tenant-scoped data access (+ `system` module)
 docs/         scope, design, decision log, PRD
 phases/       one brief per implementation phase
 examples/     ai-pr-review.yml, the repo-level config example

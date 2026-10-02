@@ -97,7 +97,9 @@ Every tenant table has `installation_id`; data access goes through helpers that 
 | `finding_feedback` | finding_id, user_id, verdict (`useful`/`false_positive`/`known`), note, created_at |
 | `audit_log` | id, installation_id, user_id, action, target, metadata, at |
 
-Indexes: `review_runs(repo_id, queued_at desc)`, `review_runs(status)`, `review_runs(repo_id, pr_number, head_sha)`, `findings(run_id)`, `findings(repo_id, severity)`, `webhook_deliveries(delivery_id)`. Retention deletes runs older than `RETENTION_DAYS` with their children.
+Implementation notes (Phase 2, `packages/db`): the child tables `repo_settings`, `review_runs`, `agent_runs`, `findings`, `posted_comments` and `finding_feedback` carry `installation_id` and reference their parent through a composite foreign key `(installation_id, parent_id)`, so the database rejects a row whose installation differs from its parent's. `webhook_deliveries.delivery_id` is the primary key. Statuses, agents, severities, categories, verdicts and the like are Postgres enums built from the value lists in `packages/shared`. `findings.evidence` is `varchar(500)`; the data layer truncates longer text. Unscoped queries exist only in `@ai-pr-review/db/system`.
+
+Indexes: `review_runs(repo_id, queued_at desc)`, `review_runs(status)`, `review_runs(repo_id, pr_number, head_sha)`, `findings(run_id)`, `findings(repo_id, severity)`, `webhook_deliveries(delivery_id)`. Retention deletes finished runs older than `RETENTION_DAYS` with their children (active runs are left to the sweeper).
 
 ## 6. Configuration
 

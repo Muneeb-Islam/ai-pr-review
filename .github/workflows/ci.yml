@@ -11,6 +11,23 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # Real PostgreSQL for the packages/db tests (same major version as docker-compose.yml).
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aipr
+          POSTGRES_PASSWORD: aipr
+          POSTGRES_DB: aipr
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aipr -d aipr"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://aipr:aipr@localhost:5432/aipr
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -21,5 +38,8 @@ jobs:
       - run: npm run lint
       - run: npm run format:check
       - run: npm run typecheck
+      # The real migrate and seed scripts, from an empty database to latest.
+      - run: npm run db:migrate
+      - run: npm run db:seed
       - run: npm test
       - run: npm run build
