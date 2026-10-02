@@ -1,54 +1,33 @@
-# Phase 0 – Decisions & Technical Design
+# Phase 0 – Decisions & Design
 
 **Depends on:** nothing  
-**Unblocks:** all later phases  
-**PRD refs:** §17 (open decisions), §18 (next step), §6 (assumptions)
+**Unblocks:** all phases  
+**Status:** documents written; owner review pending
 
 ## Goal
 
-Close the seven open decisions in the PRD and turn the PRD into a technical design that the implementation phases can follow without re-litigating scope.
+Agree scope, decisions and architecture so later phases do not re-litigate them.
 
-## Scope
+## Deliverables (written)
 
-In: decisions, design document, config schema draft, packaging choice.  
-Out: any production code.
+- [docs/scope.md](../docs/scope.md) — what we build, non-goals, requirements `PL-xx`/`UI-xx`, acceptance criteria `AC-13`–`AC-23`.
+- [docs/design.md](../docs/design.md) — architecture, data model, API, security model, run lifecycle, engine interfaces.
+- [docs/decision-log.md](../docs/decision-log.md) — decisions 1–23.
+- [docs/PRD-v0.1.md](../docs/PRD-v0.1.md) — original review requirements, still the source for `FR-xx`.
 
-## Decisions to confirm
+## Remaining tasks
 
-| #   | Decision            | Answer (2026-10-01)                                                       |
-| --- | ------------------- | ------------------------------------------------------------------------- |
-| 1   | Distribution        | Public reusable Action (fork safety needed from day one)                  |
-| 2   | Provider            | DeepSeek primary (OpenAI-compatible); Anthropic and OpenAI also supported |
-| 3   | Execution policy    | Run only on PRs targeting `main` or `master`                              |
-| 4   | Enforcement default | `comment_only`                                                            |
-| 5   | MVP language scope  | Node.js/TypeScript only                                                   |
-| 6   | Coverage source     | LCOV (Jest/Vitest) only                                                   |
-| 7   | Security tooling    | AI-only; scanner extension point only                                     |
-
-Full rationale and consequences: [docs/decision-log.md](../docs/decision-log.md).
-
-## Tasks
-
-- [x] Get owner answers for decisions 1–7 and record them in a decision log (`docs/decision-log.md`).
-- [x] Define the workflow event model, module interfaces, permission and fork strategy, prompt delimiters, error taxonomy, packaging and model handling (`docs/design.md`).
-- [x] Draft the config shape and precedence rules (`docs/design.md` §5).
-- [ ] Owner review of `docs/design.md`; resolve any comments.
-- [ ] Produce the config JSON Schema file (done as part of Phase 1 config work).
-- [ ] Pick the default model ID for the example config by checking DeepSeek's current docs (open item).
-- [ ] Choose the repo/Action name (deferred; placeholder `ai-pr-review-assistant`).
-
-## Deliverables
-
-- `docs/design.md` (event model, interfaces, permissions, prompts, error taxonomy) — written
-- `docs/decision-log.md` — written
-- Config JSON Schema — moved to Phase 1
+- [ ] Owner reviews and confirms the **assumed** decisions: 15 (stack), 16 (bring-your-own key), 17 (no billing), 18 (Docker Compose), 19 (coverage from Actions artifacts), 20 (fork policy), 21 (retention), 22 (config precedence).
+- [ ] Owner reviews `docs/design.md` §5 (data model), §8 (API) and §10 (engine interfaces); later phases build on them.
+- [ ] Decide the product/repo name (placeholder `ai-pr-review-assistant`; keep it in one place).
+- [ ] Decide whether the existing GitHub repository stays the home of the monorepo (recommended: yes, keep history).
+- [ ] Decide the production hosting target, or defer it to Phase 15.
 
 ## Exit criteria
 
-- Owner has signed off on decisions 1–7 (given) and on `docs/design.md`.
-- No open questions that block Phase 1 or 2.
+- Owner sign-off on scope, assumed decisions and design.
+- No open question blocks Phases 1–4.
 
 ## Risks
 
-- DeepSeek has no strict JSON-schema enforcement, so malformed output is more likely than with the other providers; Phases 3 and 4 handle this with validation and one repair retry.
-- Public distribution means fork-PR handling can't wait for Phase 9; the guard is built in Phase 1.
+- Scope is much larger than the original Action. Mitigation: engine first, dashboard second, strict non-goals.
