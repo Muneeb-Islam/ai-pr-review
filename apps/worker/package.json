@@ -1,0 +1,17 @@
+{
+  "name": "@ai-pr-review/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Queue worker: connects to Redis and idles (review jobs arrive in Phase 8)",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
+    "build": "node ../../scripts/build-node.mjs",
+    "start": "node --env-file-if-exists=../../.env dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-pr-review/shared": "*",
+    "ioredis": "^5.0.0"
+  }
+}
