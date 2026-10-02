@@ -1,8 +1,9 @@
-# yaml-language-server: $schema=../schemas/ai-pr-review.schema.json
-# Example configuration. Action inputs override this file; this file overrides defaults.
-provider: deepseek # anthropic | openai | deepseek
-model: deepseek-chat # Placeholder: confirm the current model ID in DeepSeek's docs (decision log, open item).
-# base_url:                # Optional OpenAI-compatible endpoint override.
+# yaml-language-server: $schema=../packages/shared/schemas/ai-pr-review.schema.json
+# Repository-level configuration, committed to `.github/ai-pr-review.yml` and read from the
+# BASE branch of each PR. It overrides the dashboard settings for the keys below.
+#
+# Not allowed here (dashboard only): provider, model, base_url, limits and provider credentials.
+# A repo file cannot choose where code is sent or raise cost limits.
 
 review:
   mode: comment_only # comment_only | warn | fail_on_threshold
@@ -20,23 +21,18 @@ agents:
   security: true
   final_review: false
 
-limits:
-  concurrency: 3
-  max_requests: 20
-  max_total_tokens: 400000
-  request_timeout_ms: 120000
-
 coverage:
-  lcov_path: coverage/lcov.info
+  artifact_name: coverage # name of the GitHub Actions artifact that holds the LCOV report
+  lcov_path: lcov.info # path of the LCOV file inside that artifact
 
-fork_prs: skip # skip | read_only (read_only is not honoured yet)
+fork_prs: skip # skip | review
 
 ignore:
   - "dist/**"
   - "coverage/**"
   - "**/*.lock"
 
-secret_paths: # Added to the built-in secret patterns.
+secret_paths: # added to the built-in secret patterns
   - "**/.env*"
 
-instructions: "" # Optional extra review guidance (treated as untrusted).
+instructions: "" # optional extra review guidance (treated as untrusted)

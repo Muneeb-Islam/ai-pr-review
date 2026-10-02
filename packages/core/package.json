@@ -1,0 +1,19 @@
+{
+  "name": "@ai-pr-review/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Review engine: routing guards, GitHub client (no HTTP server, no database)",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-pr-review/shared": "*",
+    "@octokit/core": "^7.0.0",
+    "@octokit/plugin-retry": "^8.1.1",
+    "@octokit/plugin-throttling": "^11.0.5"
+  }
+}

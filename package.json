@@ -1,30 +1,29 @@
 {
-  "name": "ai-pr-review-assistant",
+  "name": "ai-pr-review-platform",
   "version": "0.1.0",
   "private": true,
-  "description": "Multi-agent coding and PR review assistant (GitHub Action)",
+  "description": "AI PR review platform: GitHub App, API, worker and dashboard",
   "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=24"
   },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "build": "node scripts/build.mjs",
-    "schema": "tsx scripts/generate-schema.ts",
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build --workspaces --if-present",
+    "test": "vitest run",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspaces --if-present",
+    "schema": "npm run schema -w @ai-pr-review/shared",
+    "db:up": "docker compose up -d --wait postgres redis",
+    "db:down": "docker compose down",
     "check": "npm run lint && npm run format:check && npm run typecheck && npm test && npm run build"
-  },
-  "dependencies": {
-    "@actions/core": "^3.0.1",
-    "@actions/github": "^9.1.1",
-    "@octokit/plugin-retry": "^8.1.1",
-    "@octokit/plugin-throttling": "^11.0.5",
-    "yaml": "^2.9.1",
-    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

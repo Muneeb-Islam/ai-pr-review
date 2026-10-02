@@ -1,0 +1,13 @@
+{
+  "name": "@ai-pr-review/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Drizzle schema, migrations and tenant-scoped data access (stub until Phase 2)",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
