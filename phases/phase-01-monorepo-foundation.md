@@ -15,29 +15,29 @@ Commit `b77c898` already has: config schema (zod), shared types, pure routing gu
 ## Tasks
 
 ### Workspace
-- [ ] Convert to npm workspaces: `apps/api`, `apps/worker`, `apps/web`, `packages/shared`, `packages/core`, `packages/db`.
-- [ ] Root `tsconfig.base.json` (strict), per-package `tsconfig.json` with project references or path aliases.
-- [ ] Shared ESLint, Prettier and Vitest config; keep the current rules.
+- [x] Convert to npm workspaces: `apps/api`, `apps/worker`, `apps/web`, `packages/shared`, `packages/core`, `packages/db`.
+- [x] Root `tsconfig.base.json` (strict), per-package `tsconfig.json` with project references or path aliases.
+- [x] Shared ESLint, Prettier and Vitest config; keep the current rules.
 
 ### Migrate existing code
-- [ ] `src/types/*` → `packages/shared` (add `RunStatus`, run and agent-run types from design §10).
-- [ ] `src/config/*` and `schemas/*` → `packages/shared`. Change `fork_prs` to `skip | review`; replace `coverage.lcov_path` with `coverage.artifact_name` + `lcov_path` (path inside the artifact); mark `provider`, `model`, `base_url` and `limits` as dashboard-only (design §6) by splitting the schema into `sensitiveConfigSchema` and `repoConfigSchema`.
-- [ ] `src/events/guards.ts` → `packages/core/routing` (`decide()` follows `fork_prs`). Keep its tests.
-- [ ] `src/github/client.ts` → `packages/core/github`: drop `@actions/github`/`@actions/core`; build on `@octokit/core` with the retry and throttling plugins.
-- [ ] `src/util/logger.ts` → `packages/shared`; keep secret redaction; add fields `runId`, `repo`, `prNumber`.
-- [ ] Move tests next to the code they cover; all existing tests must pass or be consciously rewritten.
+- [x] `src/types/*` → `packages/shared` (add `RunStatus`, run and agent-run types from design §10).
+- [x] `src/config/*` and `schemas/*` → `packages/shared`. Change `fork_prs` to `skip | review`; replace `coverage.lcov_path` with `coverage.artifact_name` + `lcov_path` (path inside the artifact); mark `provider`, `model`, `base_url` and `limits` as dashboard-only (design §6) by splitting the schema into `sensitiveConfigSchema` and `repoConfigSchema`.
+- [x] `src/events/guards.ts` → `packages/core/routing` (`decide()` follows `fork_prs`). Keep its tests.
+- [x] `src/github/client.ts` → `packages/core/github`: drop `@actions/github`/`@actions/core`; build on `@octokit/core` with the retry and throttling plugins.
+- [x] `src/util/logger.ts` → `packages/shared`; keep secret redaction; add fields `runId`, `repo`, `prNumber`.
+- [x] Move tests next to the code they cover; all existing tests must pass or be consciously rewritten.
 
 ### Retire the Action
-- [ ] Remove `action.yml`, `dist/`, `scripts/build.mjs`, `scripts/local-run.mjs`, `.github/workflows/ai-pr-review.yml`, `examples/workflow.yml`, and the Action-only parts of `src/main.ts` and `src/events/router.ts` (their logic is rewritten in Phase 3).
-- [ ] Keep `examples/ai-pr-review.yml` as the repo-level config example, updated to the new keys.
-- [ ] Update `.github/workflows/ci.yml`: lint, format check, typecheck, test, build; no `dist/` freshness check.
+- [x] Remove `action.yml`, `dist/`, `scripts/build.mjs`, `scripts/local-run.mjs`, `.github/workflows/ai-pr-review.yml`, `examples/workflow.yml`, and the Action-only parts of `src/main.ts` and `src/events/router.ts` (their logic is rewritten in Phase 3).
+- [x] Keep `examples/ai-pr-review.yml` as the repo-level config example, updated to the new keys.
+- [x] Update `.github/workflows/ci.yml`: lint, format check, typecheck, test, build; no `dist/` freshness check.
 
 ### Local infrastructure
-- [ ] `docker-compose.yml` for PostgreSQL and Redis (named volumes, health checks); optional profile for api/worker/web.
-- [ ] `.env.example` with every variable from design §6 and comments; never commit real values. Validate env with zod at startup in each app and print only the missing variable names.
-- [ ] Stub `apps/api` (Fastify with `/healthz` and `/readyz`), `apps/worker` (starts, connects, idles), `apps/web` (Vite + React hello page).
-- [ ] Root scripts: `dev` (all apps), `build`, `test`, `lint`, `typecheck`, `db:up`.
-- [ ] README: prerequisites, setup, running locally, repository layout.
+- [x] `docker-compose.yml` for PostgreSQL and Redis (named volumes, health checks). The optional profile for api/worker/web is not added: the apps run on the host with `npm run dev`.
+- [x] `.env.example` with every variable from design §6 and comments; never commit real values. Validate env with zod at startup in each app and print only the missing variable names.
+- [x] Stub `apps/api` (Fastify with `/healthz` and `/readyz`), `apps/worker` (starts, connects, idles), `apps/web` (Vite + React hello page).
+- [x] Root scripts: `dev` (all apps), `build`, `test`, `lint`, `typecheck`, `db:up`.
+- [x] README: prerequisites, setup, running locally, repository layout.
 
 ## Testing
 
@@ -50,6 +50,8 @@ Commit `b77c898` already has: config schema (zod), shared types, pure routing gu
 - Working workspace with the old logic preserved, no Action entry point, and the local stack running.
 
 ## Exit criteria
+
+> Status: `npm run check` passes and no `@actions/*` reference remains. `docker compose up` + `npm run dev` with both services healthy (readyz 200, then 503 after stopping Redis) is **not yet verified**: Docker Desktop failed to start on the dev machine (stale `dockerInference` socket). `/healthz` 200 and `/readyz` 503 were verified against the real API process with unreachable dependencies.
 
 - `npm run check` passes at the root and in CI.
 - `docker compose up` plus `npm run dev` brings up api, worker and web locally.
