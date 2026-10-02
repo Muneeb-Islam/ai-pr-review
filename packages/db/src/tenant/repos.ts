@@ -56,12 +56,37 @@ export async function getRepository(
   return row;
 }
 
+/** Looks a repository up by its GitHub id (webhook payloads carry that, not our uuid). */
+export async function getRepositoryByGitHubId(
+  db: Database,
+  installationIds: InstallationIds,
+  githubRepoId: number,
+): Promise<Repo | undefined> {
+  if (!Number.isSafeInteger(githubRepoId)) return undefined;
+  const [row] = await db
+    .select()
+    .from(repositories)
+    .where(
+      and(
+        eq(repositories.githubRepoId, githubRepoId),
+        inInstallations(repositories.installationId, installationIds),
+      ),
+    );
+  return row;
+}
+
 export interface RepositoryInput {
   githubRepoId: number;
   fullName: string;
-  defaultBranch: string;
+  /**
+   * Installation and repository-added webhooks do not carry the default branch. When it is omitted a new
+   * row gets `main` and an existing row keeps what it has; pull request events carry the real value.
+   */
+  defaultBranch?: string;
   isPrivate: boolean;
 }
+
+const FALLBACK_DEFAULT_BRANCH = "main";
 
 /**
  * Creates or refreshes a repository of one installation (installation and repository-added events).
@@ -75,12 +100,18 @@ export async function upsertRepository(
   if (!isUuid(installationId)) throw new InvalidInputError("installationId must be a uuid");
   const [row] = await db
     .insert(repositories)
-    .values({ installationId, ...input })
+    .values({
+      installationId,
+      githubRepoId: input.githubRepoId,
+      fullName: input.fullName,
+      defaultBranch: input.defaultBranch ?? FALLBACK_DEFAULT_BRANCH,
+      isPrivate: input.isPrivate,
+    })
     .onConflictDoUpdate({
       target: [repositories.installationId, repositories.githubRepoId],
       set: {
         fullName: input.fullName,
-        defaultBranch: input.defaultBranch,
+        ...(input.defaultBranch !== undefined ? { defaultBranch: input.defaultBranch } : {}),
         isPrivate: input.isPrivate,
         active: true,
       },
@@ -106,6 +137,21 @@ export async function setRepositoriesActive(
         inArray(repositories.githubRepoId, [...githubRepoIds]),
       ),
     )
+    .returning({ id: repositories.id });
+  return rows.length;
+}
+
+/** Deactivates (or reactivates) every repository of one installation, e.g. when the App is uninstalled. */
+export async function setAllRepositoriesActive(
+  db: Database,
+  installationId: string,
+  active: boolean,
+): Promise<number> {
+  if (!isUuid(installationId)) return 0;
+  const rows = await db
+    .update(repositories)
+    .set({ active })
+    .where(eq(repositories.installationId, installationId))
     .returning({ id: repositories.id });
   return rows.length;
 }

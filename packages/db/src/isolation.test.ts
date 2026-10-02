@@ -8,6 +8,7 @@ import {
   appendAuditLog,
   countSuppressedFindings,
   createRun,
+  createRunSupersedingOlder,
   deleteProviderCredential,
   findPostedCommentByFingerprint,
   getFinding,
@@ -15,7 +16,9 @@ import {
   getLatestRunPerRepo,
   getRepoSettings,
   getRepository,
+  getRepositoryByGitHubId,
   getRun,
+  getRunByCheckRunId,
   insertFindings,
   listAgentRuns,
   listAuditLog,
@@ -32,6 +35,7 @@ import {
   putProviderCredential,
   recordAgentRun,
   recordPostedComment,
+  setAllRepositoriesActive,
   setFeedback,
   setRepositoriesActive,
   setRepositoryEnabled,
@@ -50,11 +54,13 @@ interface Bundle {
   full: Full;
   queuedRun: Run;
   unpostedFindingId: string;
+  checkRunId: number;
   credential: CredentialInfo;
   repoCredential: CredentialInfo;
   auditId: string;
 }
 
+let checkRunCounter = 0;
 let t: TestDatabase;
 let A: Bundle;
 let B: Bundle;
@@ -64,6 +70,8 @@ async function bundle(label: string): Promise<Bundle> {
   const id = tenant.installation.id;
   const full = await makeFullRun(t.db, tenant);
   const queuedRun = await makeRun(t.db, tenant, { repo: tenant.repo, prNumber: full.run.prNumber });
+  const checkRunId = 9_000_000 + ++checkRunCounter;
+  await updateRunDetails(t.db, id, queuedRun.id, { checkRunId });
   const [unposted] = await insertFindings(t.db, id, queuedRun.id, [sampleFinding()]);
   await upsertRepoSettings(t.db, id, tenant.repo.id, { fork_prs: "review" }, tenant.user.id);
   const credential = await putProviderCredential(t.db, id, {
@@ -85,6 +93,7 @@ async function bundle(label: string): Promise<Bundle> {
     full,
     queuedRun,
     unpostedFindingId: unposted!.id,
+    checkRunId,
     credential,
     repoCredential,
     auditId: audit.id,
@@ -132,6 +141,15 @@ const readCases: Record<string, ReadCase> = {
   async getRepository(v, o) {
     expect(await getRepository(t.db, [inst(v)], o.tenant.repo.id)).toBeUndefined();
     expect(await getRepository(t.db, [inst(o)], o.tenant.repo.id)).toBeDefined();
+  },
+  async getRepositoryByGitHubId(v, o) {
+    const id = o.tenant.repo.githubRepoId;
+    expect(await getRepositoryByGitHubId(t.db, [inst(v)], id)).toBeUndefined();
+    expect(await getRepositoryByGitHubId(t.db, [inst(o)], id)).toBeDefined();
+  },
+  async getRunByCheckRunId(v, o) {
+    expect(await getRunByCheckRunId(t.db, [inst(v)], o.checkRunId)).toBeUndefined();
+    expect((await getRunByCheckRunId(t.db, [inst(o)], o.checkRunId))?.id).toBe(o.queuedRun.id);
   },
   async getRepoSettings(v, o) {
     expect(await getRepoSettings(t.db, [inst(v)], o.tenant.repo.id)).toBeUndefined();
@@ -252,6 +270,25 @@ const writeCases: Record<string, WriteCase> = {
     expect(await setRepositoriesActive(t.db, inst(a), [v.tenant.repo.githubRepoId], false)).toBe(0);
     expect((await getRepository(t.db, [inst(v)], v.tenant.repo.id))?.active).toBe(true);
   },
+  async setAllRepositoriesActive(a, v) {
+    // The actor deactivates everything it owns; the victim's repositories are untouched.
+    expect(await setAllRepositoriesActive(t.db, inst(a), false)).toBe(2);
+    expect((await listRepositories(t.db, [inst(v)])).every((r) => r.active)).toBe(true);
+    await setAllRepositoriesActive(t.db, inst(a), true);
+  },
+  async createRunSupersedingOlder(a, v) {
+    const input = {
+      repoId: v.tenant.repo.id,
+      prNumber: v.queuedRun.prNumber,
+      headSha: "c".repeat(40),
+      baseSha: "b".repeat(40),
+      baseRef: "main",
+      trigger: "pull_request" as const,
+    };
+    await rejects(createRunSupersedingOlder(t.db, inst(a), input));
+    // The victim's queued run is not superseded by the refused call.
+    expect((await getRun(t.db, [inst(v)], v.queuedRun.id))?.status).toBe("queued");
+  },
   async setRepositoryEnabled(a, v) {
     expect(await setRepositoryEnabled(t.db, inst(a), v.tenant.repo.id, false)).toBeUndefined();
     expect((await getRepository(t.db, [inst(v)], v.tenant.repo.id))?.enabled).toBe(true);
@@ -288,7 +325,7 @@ const writeCases: Record<string, WriteCase> = {
   },
   async updateRunDetails(a, v) {
     await rejects(updateRunDetails(t.db, inst(a), v.queuedRun.id, { checkRunId: 1 }));
-    expect((await getRun(t.db, [inst(v)], v.queuedRun.id))?.checkRunId).toBeNull();
+    expect((await getRun(t.db, [inst(v)], v.queuedRun.id))?.checkRunId).toBe(v.checkRunId);
   },
   async recordAgentRun(a, v) {
     await rejects(

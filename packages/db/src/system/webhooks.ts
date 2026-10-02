@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Database } from "../client";
 import { webhookDeliveries } from "../schema";
 
@@ -48,4 +48,37 @@ export async function markWebhookDeliveryProcessed(
     .where(eq(webhookDeliveries.deliveryId, deliveryId))
     .returning({ deliveryId: webhookDeliveries.deliveryId });
   return rows.length > 0;
+}
+
+export const WEBHOOK_OUTCOME_ERROR = "error";
+
+/**
+ * Takes over a delivery whose processing failed (`outcome = 'error'`) so GitHub's redelivery of the same
+ * delivery ID is processed again instead of being swallowed as a duplicate. One atomic UPDATE: of several
+ * concurrent redeliveries exactly one gets `true`. A delivery that succeeded, was ignored or is still being
+ * processed is never reclaimed.
+ */
+export async function reclaimFailedWebhookDelivery(
+  db: Database,
+  deliveryId: string,
+): Promise<boolean> {
+  const rows = await db
+    .update(webhookDeliveries)
+    .set({ processedAt: null, outcome: null })
+    .where(
+      and(
+        eq(webhookDeliveries.deliveryId, deliveryId),
+        eq(webhookDeliveries.outcome, WEBHOOK_OUTCOME_ERROR),
+      ),
+    )
+    .returning({ deliveryId: webhookDeliveries.deliveryId });
+  return rows.length > 0;
+}
+
+export async function getWebhookDelivery(db: Database, deliveryId: string) {
+  const [row] = await db
+    .select()
+    .from(webhookDeliveries)
+    .where(eq(webhookDeliveries.deliveryId, deliveryId));
+  return row;
 }

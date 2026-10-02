@@ -2,7 +2,7 @@ import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import type { RunStatus, RunTrigger, Severity, TokenUsage } from "@ai-pr-review/shared";
 import type { Database } from "../client";
 import { IllegalTransitionError, InvalidInputError, NotFoundError } from "../errors";
-import { isTerminalStatus, statusesThatCanReach } from "../lifecycle";
+import { ACTIVE_STATUSES, isTerminalStatus, statusesThatCanReach } from "../lifecycle";
 import { afterCursor, clampLimit, toPage, type Page } from "../pagination";
 import { findings, repositories, reviewRuns } from "../schema";
 import { inInstallations, isUuid, type InstallationIds } from "../scope";
@@ -70,6 +70,96 @@ export async function createRun(db: Database, installationId: string, input: New
     })
     .returning();
   return row!;
+}
+
+export interface SupersedingRunResult {
+  run: Run;
+  /** Older queued/running runs of the same pull request that this run replaced (PL-06). */
+  superseded: Run[];
+  /** True when an identical active run already existed and no new run was created. */
+  duplicate: boolean;
+}
+
+/**
+ * Creates a `queued` run for a pull request and, in the same transaction, supersedes every other queued or
+ * running run of that pull request (PL-06, AC-15). A transaction-scoped advisory lock per pull request makes
+ * two webhooks racing on the same PR take turns, so exactly one active run remains.
+ *
+ * If an active run with the same head SHA and trigger already exists, it is returned untouched and nothing is
+ * created (`duplicate: true`): the idempotency that keeps a retried event from queueing the same review twice.
+ */
+export async function createRunSupersedingOlder(
+  db: Database,
+  installationId: string,
+  input: Omit<NewRun, "skip">,
+): Promise<SupersedingRunResult> {
+  if (!isUuid(installationId) || !isUuid(input.repoId)) throw new NotFoundError("Repository");
+  if (!Number.isInteger(input.prNumber) || input.prNumber < 1) {
+    throw new InvalidInputError("prNumber must be a positive integer");
+  }
+
+  return db.transaction(async (tx) => {
+    // A transaction handle exposes the same query API as the pool-backed database.
+    const txDb = tx as unknown as Database;
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`${input.repoId}:${input.prNumber}`}, 0))`,
+    );
+
+    const active = await txDb
+      .select()
+      .from(reviewRuns)
+      .where(
+        and(
+          eq(reviewRuns.installationId, installationId),
+          eq(reviewRuns.repoId, input.repoId),
+          eq(reviewRuns.prNumber, input.prNumber),
+          inArray(reviewRuns.status, [...ACTIVE_STATUSES]),
+        ),
+      )
+      .orderBy(desc(reviewRuns.queuedAt), desc(reviewRuns.id));
+
+    const duplicate = active.find(
+      (r) => r.headSha === input.headSha && r.trigger === input.trigger,
+    );
+    if (duplicate) return { run: duplicate, superseded: [], duplicate: true };
+
+    const run = await createRun(txDb, installationId, input);
+    const superseded: Run[] = [];
+    for (const old of active) {
+      try {
+        superseded.push(
+          await transitionRun(txDb, installationId, old.id, "superseded", {
+            reason: `Superseded by run ${run.id}`,
+          }),
+        );
+      } catch (err) {
+        // A worker finished it between our read and update: nothing left to supersede.
+        if (!(err instanceof IllegalTransitionError)) throw err;
+      }
+    }
+    return { run, superseded, duplicate: false };
+  });
+}
+
+/** The run whose Check Run has this GitHub id (a "re-run" click on the check). */
+export async function getRunByCheckRunId(
+  db: Database,
+  installationIds: InstallationIds,
+  checkRunId: number,
+): Promise<Run | undefined> {
+  if (!Number.isSafeInteger(checkRunId)) return undefined;
+  const [row] = await db
+    .select()
+    .from(reviewRuns)
+    .where(
+      and(
+        eq(reviewRuns.checkRunId, checkRunId),
+        inInstallations(reviewRuns.installationId, installationIds),
+      ),
+    )
+    .orderBy(desc(reviewRuns.queuedAt), desc(reviewRuns.id))
+    .limit(1);
+  return row;
 }
 
 async function getRunInInstallation(
