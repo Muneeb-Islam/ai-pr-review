@@ -58,6 +58,22 @@ export type RunTrigger =
 
 export type AgentRunStatus = "ok" | "failed" | "timeout" | "invalid_output";
 
+// ---------- persisted platform entities (docs/design.md §5, §10) ----------
+
+export type InstallationStatus = "active" | "suspended" | "deleted";
+export type AccountType = "user" | "organization";
+/** A user's role on an installation, cached from GitHub (design §9). */
+export type InstallationRole = "admin" | "viewer";
+export type FeedbackVerdict = "useful" | "false_positive" | "known";
+export type PostedCommentKind = "review_comment" | "summary" | "check";
+export type SuppressReason =
+  | "below_threshold"
+  | "invalid_line"
+  | "no_evidence"
+  | "duplicate"
+  | "style_only"
+  | "rejected_by_final_review";
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
