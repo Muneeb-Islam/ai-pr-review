@@ -32,7 +32,7 @@ const agentsSchema = z
   })
   .prefault({});
 
-const limitsSchema = z
+export const limitsSchema = z
   .strictObject({
     concurrency: positiveInt.default(3),
     max_requests: positiveInt.default(20),
@@ -80,6 +80,7 @@ export const configSchema = z.strictObject({
 
 export const SENSITIVE_CONFIG_KEYS: readonly string[] = Object.keys(sensitiveConfigSchema.shape);
 
+export type Limits = z.output<typeof limitsSchema>;
 export type SensitiveConfig = z.output<typeof sensitiveConfigSchema>;
 export type RepoConfig = z.output<typeof repoConfigSchema>;
 export type ResolvedConfig = z.output<typeof configSchema>;

@@ -26,7 +26,24 @@ export const CATEGORIES = [
   "maintainability",
 ] as const;
 export const AGENT_IDS = ["code_review", "test_coverage", "security", "final_review"] as const;
+export const COVERAGE_STATUSES = ["measured", "not_available", "skipped"] as const;
+export const COVERAGE_REASONS = [
+  "actions_denied",
+  "no_runs",
+  "ci_running",
+  "no_artifact",
+  "artifact_expired",
+  "artifact_too_large",
+  "artifact_invalid",
+  "lcov_missing",
+  "lcov_invalid",
+  "lcov_empty",
+  "github_error",
+  "no_client",
+  "no_source_files",
+] as const;
 export const REVIEW_STATUSES = ["completed", "partial", "skipped", "failed"] as const;
+export const TRACKED_STATES = ["resolved", "still_applicable", "not_evaluated"] as const;
 
 export const RUN_STATUSES = [
   "queued",

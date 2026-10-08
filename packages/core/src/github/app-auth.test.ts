@@ -211,3 +211,90 @@ describe("installation tokens", () => {
     expect(server.tokenRequests()).toBe(1);
   });
 });
+
+describe("rate limit observation (Phase 15, /metrics)", () => {
+  /** A token endpoint plus a REST endpoint that answers with GitHub's rate-limit headers (or an error carrying them). */
+  function server(rest: () => Response) {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const request = new Request(input as string | URL, init);
+      if (request.url.endsWith("/access_tokens")) {
+        return Response.json(
+          {
+            token: "ghs_installationtoken0000000001",
+            expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          },
+          { status: 201 },
+        );
+      }
+      return rest();
+    };
+    return fetchImpl;
+  }
+  const headers = (remaining: number) => ({
+    "x-ratelimit-limit": "5000",
+    "x-ratelimit-remaining": String(remaining),
+    "x-ratelimit-reset": "1893456000",
+  });
+
+  it("reports the headers of every successful response of an installation client", async () => {
+    const samples: unknown[] = [];
+    const auth = new GitHubAppAuth(
+      { appId: 99, privateKey: pkcs8 },
+      {
+        logger,
+        fetch: server(() => Response.json({ ok: true }, { headers: headers(4321) })),
+        onRateLimit: (s) => samples.push(s),
+      },
+    );
+    const client = await auth.getInstallationClient(55);
+    await client.request("GET /rate_limit");
+    expect(samples).toEqual([
+      { installationId: 55, limit: 5000, remaining: 4321, resetAt: 1893456000 },
+    ]);
+  });
+
+  it("reports the headers of an error response too (the 403 that says the limit is gone), and still throws", async () => {
+    const samples: Array<{ remaining: number }> = [];
+    const auth = new GitHubAppAuth(
+      { appId: 99, privateKey: pkcs8 },
+      {
+        logger,
+        fetch: server(() =>
+          Response.json({ message: "nope" }, { status: 404, headers: headers(0) }),
+        ),
+        onRateLimit: (s) => samples.push(s),
+      },
+    );
+    const client = await auth.getInstallationClient(55);
+    await expect(
+      client.request("GET /repos/{owner}/{repo}", { owner: "a", repo: "b" }),
+    ).rejects.toMatchObject({
+      status: 404,
+    });
+    expect(samples.map((s) => s.remaining)).toEqual([0]);
+  });
+
+  it("ignores responses without the headers, and a sink that throws never breaks a request", async () => {
+    const auth = new GitHubAppAuth(
+      { appId: 99, privateKey: pkcs8 },
+      {
+        logger,
+        fetch: server(() => Response.json({ ok: true })),
+        onRateLimit: () => {
+          throw new Error("metrics are down");
+        },
+      },
+    );
+    const client = await auth.getInstallationClient(55);
+    await expect(client.request("GET /rate_limit")).resolves.toMatchObject({ status: 200 });
+  });
+
+  it("a client made without a sink is unchanged", async () => {
+    const auth = new GitHubAppAuth(
+      { appId: 99, privateKey: pkcs8 },
+      { logger, fetch: server(() => Response.json({ ok: true }, { headers: headers(1) })) },
+    );
+    const client = await auth.getInstallationClient(55);
+    await expect(client.request("GET /rate_limit")).resolves.toMatchObject({ status: 200 });
+  });
+});

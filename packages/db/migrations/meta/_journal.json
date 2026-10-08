@@ -8,6 +8,55 @@
       "when": 1790928652924,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790938217552,
+      "tag": "0001_phase4_auth_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790945690101,
+      "tag": "0002_phase8_worker_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791178037113,
+      "tag": "0003_phase11_run_coverage",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791181738611,
+      "tag": "0004_phase13_run_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791198684823,
+      "tag": "0005_phase15_installation_status_time",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791198686839,
+      "tag": "0006_phase15_row_level_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791438243168,
+      "tag": "0007_platform_ai_settings",
+      "breakpoints": true
     }
   ]
 }

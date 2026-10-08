@@ -39,6 +39,33 @@ export function registerSecret(value: string | undefined): void {
   if (value && value.length >= 4) secretValues.add(value);
 }
 
+/**
+ * Registers a connection string and the password inside it. The password alone is what leaks when someone copies
+ * a value out of a URL, and it is not a known token format, so it has to be registered to be masked.
+ */
+export function registerUrlSecret(url: string | undefined): void {
+  if (!url) return;
+  registerSecret(url);
+  try {
+    const { password } = new URL(url);
+    if (password) registerSecret(decodeURIComponent(password));
+  } catch {
+    // Not a URL: the whole value is registered above.
+  }
+}
+
+/**
+ * Replaces every registered secret (exact value) in `text`. For text that leaves the process towards a person or a
+ * model (a comment, a prompt): the secrets of this process must not be in it, whatever their format.
+ */
+export function maskRegisteredSecrets(text: string, replacement = "[REDACTED:secret]"): string {
+  let out = text;
+  for (const secret of secretValues) {
+    if (out.includes(secret)) out = out.split(secret).join(replacement);
+  }
+  return out;
+}
+
 export function redact(text: string): string {
   let out = text;
   for (const secret of secretValues) out = out.split(secret).join(REDACTED);
@@ -83,20 +110,61 @@ const stdoutSink: LogSink = (line) => {
   process.stdout.write(`${line}\n`);
 };
 
+export type LogFormat = "text" | "json";
+
+/**
+ * One JSON object per line for log collectors: `time`, `level`, `msg` and the fields, with the same masking and
+ * truncation as the text format (sensitive field names and known secret shapes never appear).
+ */
+export function formatJsonLine(
+  level: LogLevel,
+  message: string,
+  fields: LogFields,
+  now: () => number = Date.now,
+): string {
+  const entry: Record<string, string | number | boolean> = {
+    time: new Date(now()).toISOString(),
+    level,
+    msg: redact(message),
+  };
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined || key === "time" || key === "level" || key === "msg") continue;
+    if (SENSITIVE_KEY.test(key)) entry[key] = REDACTED;
+    else if (typeof value === "string") {
+      const text = redact(value).replace(/\s+/g, " ");
+      entry[key] = text.length > MAX_VALUE_LENGTH ? `${text.slice(0, MAX_VALUE_LENGTH)}…` : text;
+    } else entry[key] = value;
+  }
+  return JSON.stringify(entry);
+}
+
+/** `LOG_FORMAT` if set, else JSON in production and readable text everywhere else. */
+export function defaultLogFormat(env: Record<string, string | undefined> = process.env): LogFormat {
+  const chosen = env["LOG_FORMAT"];
+  if (chosen === "json" || chosen === "text") return chosen;
+  return env["NODE_ENV"] === "production" ? "json" : "text";
+}
+
 export function createLogger(
   base: LogFields,
   sink: LogSink = stdoutSink,
   now: () => number = Date.now,
+  format: LogFormat = "text",
 ): Logger {
   const emit = (level: LogLevel, message: string, fields: LogFields = {}) =>
-    sink(formatLine(level, message, { ...base, ...fields }), level);
+    sink(
+      format === "json"
+        ? formatJsonLine(level, message, { ...base, ...fields }, now)
+        : formatLine(level, message, { ...base, ...fields }),
+      level,
+    );
 
   return {
     debug: (m, f) => emit("debug", m, f),
     info: (m, f) => emit("info", m, f),
     warn: (m, f) => emit("warn", m, f),
     error: (m, f) => emit("error", m, f),
-    child: (fields) => createLogger({ ...base, ...fields }, sink, now),
+    child: (fields) => createLogger({ ...base, ...fields }, sink, now, format),
     async timed(name, fn, fields) {
       const start = now();
       try {

@@ -1,0 +1,37 @@
+# Example CI workflow for the repository that is being reviewed (not for this repo).
+# The Test Coverage agent reads the LCOV report this uploads for the pull request's head commit, through the
+# GitHub API. It never runs your tests. The App needs the "Actions: read" permission.
+#
+# The artifact name and the file name match the defaults of `coverage.artifact_name` and `coverage.lcov_path`
+# (see ai-pr-review.yml). `upload-artifact` stores the file relative to the common root of `path`, so
+# `coverage/lcov.info` is stored as `lcov.info`.
+name: test
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      # Vitest (needs @vitest/coverage-v8 or @vitest/coverage-istanbul):
+      - run: npx vitest run --coverage --coverage.reporter=lcov
+      # Jest:
+      # - run: npx jest --coverage --coverageReporters=lcov
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }} # also upload when a test failed
+        with:
+          name: coverage
+          path: coverage/lcov.info
+          if-no-files-found: error
+          retention-days: 14

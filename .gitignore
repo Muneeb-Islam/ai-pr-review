@@ -1,7 +1,41 @@
+# Dependencies and build output
 node_modules
 coverage
 dist
+dist-smoke-*
+*.tsbuildinfo
+.vite
+
+# Logs
 *.log
+npm-debug.log*
+
+# Environment files: only the examples are committed
 .env
 .env.*
 !.env.example
+!.env.production.example
+
+# Production stack: generated secrets never go into git
+secrets/
+*.pem
+*.key
+
+# Browser tests (apps/web): seeded state and reports
+apps/web/e2e/.state
+test-results
+playwright-report
+
+# Development-process notes and media, kept locally and not part of the product repo
+/PHASES.md
+/phases/
+/demo/
+
+# Editors, OS and tooling
+.idea/
+.vscode/
+.claude/
+.DS_Store
+Thumbs.db
+*.swp
+*.bak

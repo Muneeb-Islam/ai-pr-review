@@ -37,6 +37,19 @@ export function loadPrivateKey(raw: string): KeyObject {
   }
 }
 
+/** The three `x-ratelimit-*` headers as numbers, or undefined when GitHub did not send all of them. */
+export function readRateLimit(
+  installationId: number,
+  headers: Record<string, string | number | undefined> | undefined,
+): RateLimitSample | undefined {
+  if (!headers) return undefined;
+  const limit = Number(headers["x-ratelimit-limit"]);
+  const remaining = Number(headers["x-ratelimit-remaining"]);
+  const resetAt = Number(headers["x-ratelimit-reset"]);
+  if (![limit, remaining, resetAt].every(Number.isFinite)) return undefined;
+  return { installationId, limit, remaining, resetAt };
+}
+
 const base64url = (input: Buffer | string): string => Buffer.from(input).toString("base64url");
 
 /** RS256 JWT that authenticates as the App itself (design §4). Not logged, not stored. */
@@ -62,8 +75,19 @@ interface CachedToken {
   expiresAtMs: number;
 }
 
+/** What GitHub says about an installation's rate limit in the headers of any response. */
+export interface RateLimitSample {
+  installationId: number;
+  limit: number;
+  remaining: number;
+  /** Unix seconds at which the window resets. */
+  resetAt: number;
+}
+
 export interface GitHubAppAuthOptions {
   logger: Logger;
+  /** Called with the rate-limit headers of every response of an installation client (metrics, Phase 15). Never throws into the request. */
+  onRateLimit?: (sample: RateLimitSample) => void;
   /** Test seams. */
   fetch?: typeof fetch;
   now?: () => number;
@@ -103,6 +127,16 @@ export class GitHubAppAuth {
     return request;
   }
 
+  /** An Octokit authenticated as the App itself (App JWT), for calls such as `GET /app`. */
+  getAppClient(): Octokit {
+    const jwt = createAppJwt({ appId: this.credentials.appId, privateKey: this.key }, this.now());
+    registerSecret(jwt);
+    return new Octokit({
+      auth: jwt,
+      ...(this.options.fetch ? { request: { fetch: this.options.fetch } } : {}),
+    });
+  }
+
   /** Forget a token, e.g. after GitHub answered 401 for it. */
   invalidate(installationId: number): void {
     this.cache.delete(installationId);
@@ -111,11 +145,34 @@ export class GitHubAppAuth {
   /** An Octokit authenticated as the installation (retry and throttling included). */
   async getInstallationClient(installationId: number): Promise<GitHubClient> {
     const token = await this.getInstallationToken(installationId);
-    return createGitHubClient(
+    const client = createGitHubClient(
       token,
       this.options.logger,
       this.options.fetch ? { fetch: this.options.fetch } : {},
     );
+    const sink = this.options.onRateLimit;
+    if (sink) {
+      const observe = (headers: Record<string, string | number | undefined> | undefined) => {
+        const sample = readRateLimit(installationId, headers);
+        if (!sample) return;
+        try {
+          sink(sample);
+        } catch {
+          // Metrics must never break a review.
+        }
+      };
+      client.hook.after("request", (response) => {
+        observe(response.headers as Record<string, string | number | undefined>);
+      });
+      client.hook.error("request", (error) => {
+        observe(
+          (error as { response?: { headers?: Record<string, string | number | undefined> } })
+            .response?.headers,
+        );
+        throw error;
+      });
+    }
+    return client;
   }
 
   private async fetchToken(installationId: number): Promise<string> {

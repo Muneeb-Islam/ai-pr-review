@@ -67,6 +67,12 @@ export default tseslint.config(
     },
   },
   {
+    // The browser-test harness plays the part of the api and the worker: it seeds the test database and changes
+    // runs directly, as they would. It is test tooling and is not shipped with the dashboard.
+    files: ["apps/web/e2e/**/*.ts"],
+    rules: { "no-restricted-imports": "off" },
+  },
+  {
     files: ["**/scripts/**"],
     languageOptions: {
       globals: {

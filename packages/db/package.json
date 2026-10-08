@@ -8,10 +8,12 @@
     ".": "./src/index.ts",
     "./system": "./src/system/index.ts",
     "./schema": "./src/schema.ts",
+    "./seed": "./src/seed.ts",
     "./testing": "./src/testing/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "build:migrate": "node ../../scripts/build-node.mjs scripts/migrate.ts dist/migrate.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=../../.env scripts/migrate.ts",
     "db:seed": "tsx --env-file-if-exists=../../.env scripts/seed.ts"

@@ -1,0 +1,90 @@
+# Alert rules for the platform, in Prometheus format. A starting point: adjust the thresholds to your traffic.
+# Scrape the api's /metrics (bearer token METRICS_TOKEN) from inside the network, for example:
+#
+#   scrape_configs:
+#     - job_name: ai-pr-review
+#       metrics_path: /metrics
+#       authorization: { type: Bearer, credentials_file: /etc/prometheus/aipr_metrics_token }
+#       static_configs: [{ targets: ["api:3000"] }]
+#
+# What each alert means and what to do first: docs/operations.md, sections 7 and 11. A test checks that every metric named
+# here is one the api exports.
+groups:
+  - name: ai-pr-review
+    rules:
+      - alert: AiprApiDown
+        expr: up{job="ai-pr-review"} == 0 or aipr_up == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: The api does not answer its metrics scrape.
+
+      - alert: AiprDependencyDown
+        expr: aipr_dependency_up == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: "{{ $labels.dependency }} does not answer. Reviews and the dashboard are affected."
+
+      - alert: AiprQueueStuck
+        expr: aipr_oldest_queued_run_age_seconds > 600
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: A review has waited more than 10 minutes in the queue. Are the workers and Redis up?
+
+      - alert: AiprRunsStuck
+        expr: aipr_runs_stuck > 0
+        for: 5m
+        labels: { severity: warn }
+        annotations:
+          summary: Running reviews have no heartbeat. The sweeper should recover them; restart the workers if this persists.
+
+      - alert: AiprFailureSpike
+        expr: aipr_run_failure_ratio_24h > 0.3 and sum(aipr_runs_finished_24h) > 10
+        for: 15m
+        labels: { severity: warn }
+        annotations:
+          summary: More than 30% of the reviews of the last day failed. Open the failed runs; the reason is on each.
+
+      - alert: AiprWebhookFailures
+        expr: aipr_webhook_deliveries_24h{state="failed"} > 0 or aipr_webhook_deliveries_24h{state="unprocessed"} > 0
+        for: 10m
+        labels: { severity: warn }
+        annotations:
+          summary: Webhook deliveries failed or never finished. Check the api log and redeliver them from GitHub.
+
+      - alert: AiprWebhookForgery
+        expr: rate(aipr_webhook_requests_total{result="invalid_signature"}[5m]) > 0.2
+        for: 10m
+        labels: { severity: warn }
+        annotations:
+          summary: Webhooks with an invalid signature keep arriving. A wrong secret after a rotation, or someone probing.
+
+      - alert: AiprDeadLetters
+        expr: aipr_dead_letter_jobs > 0
+        for: 5m
+        labels: { severity: warn }
+        annotations:
+          summary: Jobs ran out of retries. Each is a run that failed; look at the worker log.
+
+      - alert: AiprGitHubRateLimit
+        expr: aipr_github_rate_limit_ratio_min < 0.1
+        for: 5m
+        labels: { severity: warn }
+        annotations:
+          summary: An installation has used 90% of its GitHub rate limit; its reviews slow down.
+
+      - alert: AiprRateLimitedRequests
+        expr: sum(rate(aipr_http_rate_limited_total[5m])) > 5
+        for: 10m
+        labels: { severity: info }
+        annotations:
+          summary: The dashboard API is refusing many requests by rate limit. A client in a loop, or an attack.
+
+      - alert: AiprIsolationNotEnforced
+        expr: aipr_row_level_security_enforced == 0
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: The database role is not subject to the tenant row-level-security policies (superuser, BYPASSRLS or owner).

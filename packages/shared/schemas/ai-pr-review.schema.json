@@ -9,10 +9,17 @@
         "mode": {
           "default": "comment_only",
           "type": "string",
-          "enum": ["comment_only", "warn", "fail_on_threshold"]
+          "enum": [
+            "comment_only",
+            "warn",
+            "fail_on_threshold"
+          ]
         },
         "target_branches": {
-          "default": ["main", "master"],
+          "default": [
+            "main",
+            "master"
+          ],
           "minItems": 1,
           "type": "array",
           "items": {
@@ -23,12 +30,22 @@
         "draft_behavior": {
           "default": "summary_only",
           "type": "string",
-          "enum": ["summary_only", "full", "skip"]
+          "enum": [
+            "summary_only",
+            "full",
+            "skip"
+          ]
         },
         "minimum_severity": {
           "default": "medium",
           "type": "string",
-          "enum": ["critical", "high", "medium", "low", "info"]
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low",
+            "info"
+          ]
         },
         "minimum_confidence": {
           "default": 0.8,
@@ -100,10 +117,17 @@
     "fork_prs": {
       "default": "skip",
       "type": "string",
-      "enum": ["skip", "review"]
+      "enum": [
+        "skip",
+        "review"
+      ]
     },
     "ignore": {
-      "default": ["dist/**", "coverage/**", "**/*.lock"],
+      "default": [
+        "dist/**",
+        "coverage/**",
+        "**/*.lock"
+      ],
       "type": "array",
       "items": {
         "type": "string",
@@ -111,7 +135,9 @@
       }
     },
     "secret_paths": {
-      "default": ["**/.env*"],
+      "default": [
+        "**/.env*"
+      ],
       "type": "array",
       "items": {
         "type": "string",

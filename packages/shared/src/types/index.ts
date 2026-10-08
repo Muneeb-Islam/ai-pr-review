@@ -21,6 +21,112 @@ export interface Finding {
   sourceCommitSha: string;
 }
 
+export type CoverageStatus = "measured" | "not_available" | "skipped";
+
+/** Why coverage could not be measured (FR-23). The code is for filtering and tests; users read the sentence. */
+export type CoverageReason =
+  | "actions_denied"
+  | "no_runs"
+  | "ci_running"
+  | "no_artifact"
+  | "artifact_expired"
+  | "artifact_too_large"
+  | "artifact_invalid"
+  | "lcov_missing"
+  | "lcov_invalid"
+  | "lcov_empty"
+  | "github_error"
+  | "no_client"
+  | "no_source_files";
+
+/** A run of consecutive lines, as new-file line numbers. */
+export interface LineRange {
+  start: number;
+  end: number;
+}
+
+/** What the coverage report says about one changed file (FR-22). */
+export interface CoverageFile {
+  path: string;
+  /** `measured`: the report has the file. `not_in_report`: it does not, so nothing is known about its coverage. */
+  status: "measured" | "not_in_report";
+  /** Changed lines the report counts as executable, and how many of them ran. */
+  coveredLines: number;
+  totalLines: number;
+  /** Executable changed lines that never ran, as ranges. Capped. */
+  uncovered: LineRange[];
+  /** Functions declared on changed lines that never ran. Capped. */
+  uncoveredFunctions?: string[];
+  /** Branches on changed lines, when the report has branch data. */
+  coveredBranches?: number;
+  totalBranches?: number;
+}
+
+/**
+ * The Test Coverage agent's measured result for a run (FR-22 to FR-25, `review_runs.coverage`). Only data the
+ * report holds goes here; suggestions from reading the diff are findings, never part of this record.
+ */
+export interface CoverageSummary {
+  status: CoverageStatus;
+  /** One fixed sentence: why coverage was not measured or skipped. Absent when measured. */
+  reason?: string;
+  reasonCode?: CoverageReason;
+  /** Covered share of executable changed lines in matched files, 0 to 1. Absent when no such line exists. */
+  changedLineCoverage?: number;
+  coveredLines?: number;
+  totalLines?: number;
+  /** Changed source files with their measured coverage, or marked as missing from the report. */
+  files?: CoverageFile[];
+  /** Where the report came from. */
+  artifact?: { name: string; runId: number };
+  observations: string[];
+}
+
+// ---------- findings across runs (FR-37, Phase 13) ----------
+
+/**
+ * What became of a finding of the previous review of the pull request: `resolved` (the code was evaluated again
+ * and the problem is gone), `still_applicable` (reported again) or `not_evaluated` (this run could not look: the
+ * file or the agent was not part of it).
+ */
+export type TrackedState = "resolved" | "still_applicable" | "not_evaluated";
+
+export interface TrackedFinding {
+  state: TrackedState;
+  fingerprint: string;
+  agent: AgentId;
+  category: Category;
+  severity: Severity;
+  title: string;
+  filePath?: string;
+  startLine?: number;
+  /** For `not_evaluated` and `resolved`: one fixed sentence saying why. */
+  reason?: string;
+}
+
+/**
+ * The comparison of a run with the previous review of the same pull request (`review_runs.tracking`). Holds what
+ * the earlier run already stored about its own findings (titles, places), never code.
+ */
+export interface FindingTracking {
+  previousRunId: string;
+  previousHeadSha: string;
+  items: TrackedFinding[];
+}
+
+/** What the optional Final Review pass did (`review_runs.final_review`, design §10). Counts only. */
+export interface FinalReviewSummary {
+  /** `ok`, or how the pass failed: the findings it could not check were kept. */
+  status: AgentRunStatus;
+  /** Findings it was asked about. */
+  reviewed: number;
+  approved: number;
+  /** Dropped as unsupported by the diff (`rejected_by_final_review`). */
+  rejected: number;
+  /** Findings past the pass's limit, kept without a second look. */
+  unreviewed: number;
+}
+
 export type ReviewStatus = "completed" | "partial" | "skipped" | "failed";
 
 export interface ReviewResult {

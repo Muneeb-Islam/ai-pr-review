@@ -2,7 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import type { Database } from "../client";
 import { NotFoundError } from "../errors";
 import { afterCursor, clampLimit, toPage, type Page } from "../pagination";
-import { auditLog } from "../schema";
+import { auditLog, users } from "../schema";
 import { inInstallations, isUuid, type InstallationIds } from "../scope";
 import type { AuditEntry } from "../types";
 
@@ -61,4 +61,35 @@ export async function listAuditLog(
     .orderBy(desc(auditLog.at), desc(auditLog.id))
     .limit(limit + 1);
   return toPage(rows, limit, (r) => ({ at: r.at, id: r.id }));
+}
+
+/** An audit entry with the GitHub login of the person who did it (null when that account is gone). */
+export interface AuditEntryWithUser {
+  entry: AuditEntry;
+  userLogin: string | null;
+}
+
+/** The audit view (PL-15): entries of one installation, newest first, with who did what. */
+export async function listAuditEntries(
+  db: Database,
+  installationIds: InstallationIds,
+  filters: { installationId: string; action?: string; cursor?: string; limit?: number },
+): Promise<Page<AuditEntryWithUser>> {
+  const limit = clampLimit(filters.limit);
+  if (!isUuid(filters.installationId)) return { items: [], nextCursor: null };
+  const rows = await db
+    .select({ entry: auditLog, userLogin: users.login })
+    .from(auditLog)
+    .leftJoin(users, eq(users.id, auditLog.userId))
+    .where(
+      and(
+        inInstallations(auditLog.installationId, installationIds),
+        eq(auditLog.installationId, filters.installationId),
+        filters.action ? eq(auditLog.action, filters.action) : undefined,
+        filters.cursor ? afterCursor(auditLog.at, auditLog.id, filters.cursor) : undefined,
+      ),
+    )
+    .orderBy(desc(auditLog.at), desc(auditLog.id))
+    .limit(limit + 1);
+  return toPage(rows, limit, (r) => ({ at: r.entry.at, id: r.entry.id }));
 }

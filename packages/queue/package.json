@@ -1,0 +1,18 @@
+{
+  "name": "@ai-pr-review/queue",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "BullMQ job queue for review runs, plus the Redis channels the api and worker use to signal each other (run.updated, run.cancel)",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-pr-review/shared": "*",
+    "bullmq": "^6.3.11",
+    "ioredis": "^5.0.0"
+  }
+}

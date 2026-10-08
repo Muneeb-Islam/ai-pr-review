@@ -45,8 +45,17 @@ import {
   RUN_TRIGGERS,
   SEVERITIES,
   SUPPRESS_REASONS,
+  type CoverageSummary,
+  type FinalReviewSummary,
+  type FindingTracking,
   type TokenUsage,
 } from "@ai-pr-review/shared";
+
+/** A file the review did not look at, and why (`review_runs.skipped_files`). */
+export interface SkippedFileRecord {
+  path: string;
+  reason: string;
+}
 
 /** Maximum length of `findings.evidence` (design §9, data minimisation). */
 export const EVIDENCE_MAX_CHARS = 500;
@@ -95,7 +104,10 @@ export const sessions = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    /** Absolute lifetime: the session ends here whatever the activity. */
     expiresAt: ts("expires_at").notNull(),
+    /** Last request that used the session; the idle timeout counts from here. */
+    lastSeenAt: ts("last_seen_at").notNull().defaultNow(),
     csrfSecret: text("csrf_secret").notNull(),
     createdAt: createdAt(),
   },
@@ -113,6 +125,11 @@ export const installations = pgTable("installations", {
   accountLogin: text("account_login").notNull(),
   accountType: accountTypeEnum("account_type").notNull(),
   status: installationStatusEnum("status").notNull().default("active"),
+  /**
+   * When `status` last changed. A deleted (uninstalled) installation is purged this many retention days
+   * later (PL-08, AC-22); a suspended one is kept as it is.
+   */
+  statusChangedAt: ts("status_changed_at").notNull().defaultNow(),
   createdAt: createdAt(),
 });
 
@@ -157,6 +174,44 @@ export const repositories = pgTable(
     index("repositories_installation_full_name_idx").on(t.installationId, t.fullName),
   ],
 );
+
+/**
+ * Which repositories a user may reach and whether they administer them, cached from GitHub with a short
+ * TTL (`refreshed_at`, design §9). `user_installations` says "has access through this installation"; the
+ * rows here narrow that to repositories, because GitHub lets an installation cover repositories a given
+ * member cannot see. Written only by the auth module.
+ */
+export const userRepositories = pgTable(
+  "user_repositories",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    installationId: uuid("installation_id").notNull(),
+    repoId: uuid("repo_id").notNull(),
+    role: installationRoleEnum("role").notNull(),
+    refreshedAt: ts("refreshed_at").notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.repoId] }),
+    foreignKey({
+      name: "user_repositories_repo_fk",
+      columns: [t.installationId, t.repoId],
+      foreignColumns: [repositories.installationId, repositories.id],
+    }).onDelete("cascade"),
+    index("user_repositories_repo_id_idx").on(t.repoId),
+  ],
+);
+
+/** Installation-wide defaults (the layer between built-in defaults and a repository's own settings). */
+export const installationSettings = pgTable("installation_settings", {
+  installationId: uuid("installation_id")
+    .primaryKey()
+    .references(() => installations.id, { onDelete: "cascade" }),
+  config: jsonb("config").$type<Record<string, unknown>>().notNull().default({}),
+  updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
 
 export const repoSettings = pgTable(
   "repo_settings",
@@ -210,6 +265,30 @@ export const providerCredentials = pgTable(
   ],
 );
 
+/**
+ * The platform-wide AI setting (one row, id 1): which provider is active for every repository that has not chosen
+ * its own, and the model to use with each provider. Not tenant data, so it has no installation and no row-level security.
+ */
+export const platformSettings = pgTable("platform_settings", {
+  id: integer("id").primaryKey().default(1),
+  activeProvider: providerEnum("active_provider"),
+  /** Provider -> model name. */
+  models: jsonb("models").$type<Record<string, string>>().notNull().default({}),
+  updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/** The platform-wide key per provider: the fallback when a repository or installation has no key of its own. */
+export const platformCredentials = pgTable("platform_credentials", {
+  provider: providerEnum("provider").primaryKey(),
+  /** Opaque ciphertext, read back only by the worker (design §9). */
+  ciphertext: bytea("ciphertext").notNull(),
+  keyVersion: integer("key_version").notNull().default(1),
+  last4: varchar("last4", { length: 4 }).notNull(),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: createdAt(),
+});
+
 export const webhookDeliveries = pgTable(
   "webhook_deliveries",
   {
@@ -256,6 +335,29 @@ export const reviewRuns = pgTable(
       .$type<TokenUsage>()
       .notNull()
       .default({ inputTokens: 0, outputTokens: 0 }),
+    /** Files the review left out (excluded or over the size limits) with the reason; capped by the worker. */
+    skippedFiles: jsonb("skipped_files").$type<SkippedFileRecord[]>().notNull().default([]),
+    /**
+     * What the Test Coverage agent measured for the changed lines (design §10, FR-22 to FR-25). Null when the agent
+     * did not run. Holds paths, counts and line ranges only, never code.
+     */
+    coverage: jsonb("coverage").$type<CoverageSummary>(),
+    /**
+     * The previous review's findings and what became of them in this run: resolved, still applicable or not
+     * evaluated (FR-37). Null when there was no earlier review with findings to compare with. Titles and places
+     * only, copied from the earlier run's own findings.
+     */
+    tracking: jsonb("tracking").$type<FindingTracking>(),
+    /** What the optional Final Review pass did (counts). Null when it did not run. */
+    finalReview: jsonb("final_review").$type<FinalReviewSummary>(),
+    /** Last sign of life of the worker executing the run (design §7). Null until it starts. */
+    heartbeatAt: ts("heartbeat_at"),
+    /**
+     * How many times a worker has started this run. Doubles as a fencing token: a worker may only write
+     * results while the run still carries the attempt number it claimed, so a worker that was presumed dead
+     * and recovered cannot overwrite its replacement.
+     */
+    attempts: integer("attempts").notNull().default(0),
   },
   (t) => [
     foreignKey({
@@ -277,6 +379,10 @@ export const reviewRuns = pgTable(
     index("review_runs_active_idx")
       .on(t.installationId, t.queuedAt)
       .where(sql`${t.status} in ('queued', 'running')`),
+    // The stuck-run sweeper (design §7) scans running runs by heartbeat.
+    index("review_runs_running_heartbeat_idx")
+      .on(t.heartbeatAt)
+      .where(sql`${t.status} = 'running'`),
     // Lifecycle invariants (scope §5.1), enforced even for writers that bypass transitionRun.
     check(
       "review_runs_finished_at_matches_status",
@@ -312,6 +418,8 @@ export const agentRuns = pgTable(
       foreignColumns: [reviewRuns.installationId, reviewRuns.id],
     }).onDelete("cascade"),
     index("agent_runs_run_id_idx").on(t.runId),
+    // One row per agent per run: persisting the result of a re-processed run updates, never duplicates.
+    uniqueIndex("agent_runs_run_agent_uq").on(t.runId, t.agent),
   ],
 );
 
@@ -354,6 +462,15 @@ export const findings = pgTable(
     unique("findings_installation_id_id_uq").on(t.installationId, t.id),
     index("findings_run_id_idx").on(t.runId),
     index("findings_repo_severity_idx").on(t.repoId, t.severity),
+    // Idempotent persistence (Phase 8): a finding is identified by run, agent and fingerprint. Suppressed
+    // findings are identified together with their reason, because a duplicate shares the fingerprint of the
+    // finding it duplicates.
+    uniqueIndex("findings_run_agent_fingerprint_uq")
+      .on(t.runId, t.agent, t.fingerprint)
+      .where(sql`${t.suppressedReason} is null`),
+    uniqueIndex("findings_run_agent_fingerprint_suppressed_uq")
+      .on(t.runId, t.agent, t.fingerprint, t.suppressedReason)
+      .where(sql`${t.suppressedReason} is not null`),
     check("findings_confidence_range", sql`${t.confidence} >= 0 and ${t.confidence} <= 1`),
     check("findings_start_line_positive", sql`${t.startLine} is null or ${t.startLine} > 0`),
     check(

@@ -10,3 +10,5 @@ export * from "./comments";
 export * from "./feedback";
 export * from "./credentials";
 export * from "./audit";
+export * from "./explorer";
+export * from "./analytics";

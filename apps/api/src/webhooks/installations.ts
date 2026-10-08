@@ -1,10 +1,7 @@
 // Installation sync (PL-01, AC-22): installation lifecycle and repository selection events.
+import { setRepositoriesActive, upsertRepository, type Run } from "@ai-pr-review/db";
 import {
-  setAllRepositoriesActive,
-  setRepositoriesActive,
-  upsertRepository,
-} from "@ai-pr-review/db";
-import {
+  deactivateInstallation,
   getInstallationByGitHubId,
   setInstallationStatus,
   upsertInstallationFromGitHub,
@@ -12,6 +9,25 @@ import {
 import type { InstallationEvent, InstallationRepositoriesEvent } from "./payloads";
 import { accountTypeOf } from "./target";
 import { ignored, type HandlerResult, type WebhookDeps } from "./types";
+
+const UNINSTALLED = "The GitHub App was uninstalled, so this review was stopped.";
+const SUSPENDED = "The GitHub App was suspended, so this review was stopped.";
+
+/**
+ * Tells the dashboard and any worker that the runs stopped by an uninstall or suspension are cancelled. Their status
+ * changed first, so a worker that is executing one has already lost its fence; the message makes it let go at once.
+ */
+async function announceStopped(deps: WebhookDeps, stopped: Run[]): Promise<void> {
+  for (const run of stopped) {
+    await deps.signals?.publishUpdated({
+      runId: run.id,
+      installationId: run.installationId,
+      repoId: run.repoId,
+      status: run.status,
+    });
+    await deps.signals?.publishCancel(run.id, "cancelled");
+  }
+}
 
 export async function handleInstallation(
   deps: WebhookDeps,
@@ -42,24 +58,54 @@ export async function handleInstallation(
     }
 
     case "deleted": {
-      const installation = await setInstallationStatus(deps.db, githubInstallationId, "deleted");
-      if (!installation) return ignored("unknown_installation");
-      // Uninstalling deactivates the installation and its repositories: no further runs (AC-22).
-      const repos = await setAllRepositoriesActive(deps.db, installation.id, false);
-      deps.logger.info("Installation deleted", { installation: githubInstallationId, repos });
-      return { outcome: "installation_deleted", installationId: installation.id };
+      // Uninstalling deactivates the installation and its repositories (AC-22), stops what was waiting, forgets the
+      // provider keys (a secret has no use once the App is gone) and who could see the data. The rest is hidden from
+      // the dashboard and purged when retention ends (PL-08).
+      const done = await deactivateInstallation(
+        deps.db,
+        githubInstallationId,
+        "deleted",
+        UNINSTALLED,
+      );
+      if (!done) return ignored("unknown_installation");
+      await announceStopped(deps, done.stopped);
+      deps.logger.info("Installation deleted", {
+        installation: githubInstallationId,
+        repos: done.repositories,
+        stopped: done.stopped.length,
+        keys: done.keys,
+      });
+      return { outcome: "installation_deleted", installationId: done.installationId };
     }
 
     case "suspend":
     case "unsuspend": {
       const status = event.action === "suspend" ? "suspended" : "active";
+      // A suspended App cannot be reached on GitHub: stop what was waiting. Keys and access stay, because suspension
+      // is reversible; the data is hidden from the dashboard for as long as it lasts.
+      if (status === "suspended") {
+        const done = await deactivateInstallation(
+          deps.db,
+          githubInstallationId,
+          "suspended",
+          SUSPENDED,
+        );
+        if (!done) return ignored("unknown_installation");
+        await announceStopped(deps, done.stopped);
+        deps.logger.info("Installation status changed", {
+          installation: githubInstallationId,
+          status,
+          stopped: done.stopped.length,
+        });
+        return { outcome: "installation_suspended", installationId: done.installationId };
+      }
       const installation = await setInstallationStatus(deps.db, githubInstallationId, status);
       if (!installation) return ignored("unknown_installation");
       deps.logger.info("Installation status changed", {
         installation: githubInstallationId,
         status,
       });
-      return { outcome: `installation_${status}`, installationId: installation.id };
+      return { outcome: "installation_active", installationId: installation.id };
     }
 
     default:

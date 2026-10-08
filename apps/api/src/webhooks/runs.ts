@@ -23,6 +23,16 @@ export interface RunRequest {
   parentRunId?: string;
 }
 
+/** Tells the dashboard a run changed (the row is already written). Signals never reject. */
+async function announce(deps: WebhookDeps, run: Run): Promise<void> {
+  await deps.signals?.publishUpdated({
+    runId: run.id,
+    installationId: run.installationId,
+    repoId: run.repoId,
+    status: run.status,
+  });
+}
+
 const splitFullName = (fullName: string) => {
   const [owner = "", repo = ""] = fullName.split("/");
   return { owner, repo };
@@ -53,14 +63,16 @@ export async function requestRun(deps: WebhookDeps, req: RunRequest): Promise<Ha
     ...(req.triggeredBy ? { triggeredBy: req.triggeredBy } : {}),
     ...(req.parentRunId ? { parentRunId: req.parentRunId } : {}),
   };
-  const result = (outcome: string): HandlerResult => ({
+  const result = (outcome: string, run?: Run): HandlerResult => ({
     outcome,
     installationId: installation.id,
+    ...(run ? { run } : {}),
   });
   const skip = async (reason: string): Promise<HandlerResult> => {
     const run = await createRun(db, installation.id, { ...base, skip: { reason } });
     log.info("Run skipped", { run: run.id, reason });
-    return result("run_skipped");
+    await announce(deps, run);
+    return result("run_skipped", run);
   };
 
   if (!repo.enabled) return skip(`Reviews are disabled for ${repo.fullName}.`);
@@ -77,16 +89,29 @@ export async function requestRun(deps: WebhookDeps, req: RunRequest): Promise<Ha
   const decision = decide(req.trigger, pr, config);
   if (decision.action === "skip") return skip(decision.reason);
 
-  const quota = await (deps.quota ?? allowAllQuota)({
-    installationId: installation.id,
-    repoId: repo.id,
-    trigger: req.trigger,
-  });
-  if (!quota.allowed) return skip(quota.reason);
-
-  const { run, superseded, duplicate } = await createRunSupersedingOlder(db, installation.id, base);
+  // The quota and queue limits are decided inside the transaction that creates the run, under a lock per
+  // installation (a burst of events cannot all pass a limit that each would pass alone). A duplicate of a run that is
+  // already active never reaches the decision, so a redelivery cannot leave a skipped run behind.
+  const created = await createRunSupersedingOlder(db, installation.id, base, (tx) =>
+    (deps.quota ?? allowAllQuota)({
+      installationId: installation.id,
+      repoId: repo.id,
+      trigger: req.trigger,
+      db: tx,
+    }),
+  );
+  if ("rejected" in created) return skip(created.rejected);
+  const { run, superseded, duplicate } = created;
   if (duplicate) log.info("Run already queued for this head", { run: run.id });
   else log.info("Run queued", { run: run.id, superseded: superseded.length });
+  if (!duplicate) {
+    // A superseded run that a worker is executing stops at its next check; the message makes it immediate.
+    for (const old of superseded) {
+      await announce(deps, old);
+      await deps.signals?.publishCancel(old.id, "superseded");
+    }
+    await announce(deps, run);
+  }
 
   // Also for a duplicate: a retried delivery heals a first attempt that failed after creating the run.
   // Enqueueing is idempotent per run id.
@@ -94,7 +119,7 @@ export async function requestRun(deps: WebhookDeps, req: RunRequest): Promise<Ha
     await attachQueuedCheckRun(deps, installation, repo, run);
   }
   await deps.queue.enqueue(run.id);
-  return result(duplicate ? "run_exists" : "run_queued");
+  return result(duplicate ? "run_exists" : "run_queued", run);
 }
 
 /**

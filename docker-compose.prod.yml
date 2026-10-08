@@ -1,0 +1,219 @@
+# Production stack: PostgreSQL, Redis, a one-shot migration, the api, the worker and the dashboard's web server.
+# See docs/operations.md. Nothing in this file or in the images is a secret: every secret is a file under ./secrets
+# (create them with `scripts/ops/init-secrets.sh`) that Docker mounts at /run/secrets, read through the *_FILE variables.
+#
+#   scripts/ops/init-secrets.sh        # once: generates the secrets that are random, tells you which ones you must supply
+#   cp .env.production.example .env.production   # and edit: URLs, GitHub App id and client id
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# Only the web server publishes a port. Put TLS in front of it (a load balancer, Caddy, Traefik): the dashboard's
+# cookies are Secure and only work over https.
+name: ai-pr-review-prod
+
+x-service: &service
+  restart: unless-stopped
+  init: true
+  # Defence in depth for services that need nothing from the host.
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+x-node-env: &node-env
+  NODE_ENV: production
+  LOG_FORMAT: json
+  DATABASE_URL_FILE: /run/secrets/database_url
+  REDIS_URL_FILE: /run/secrets/redis_url
+  PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL in .env.production}
+  GITHUB_APP_ID: ${GITHUB_APP_ID:?set GITHUB_APP_ID in .env.production}
+  GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github_app_private_key
+  ENCRYPTION_KEY_FILE: /run/secrets/encryption_key
+  ENCRYPTION_KEY_VERSION: ${ENCRYPTION_KEY_VERSION:-1}
+  RETENTION_DAYS: ${RETENTION_DAYS:-90}
+
+services:
+  postgres:
+    <<: *service
+    image: postgres:17-alpine
+    # PostgreSQL writes to its data directory and to a few places in /var/run. Its entrypoint starts as root, fixes the
+    # ownership of the data directory and switches to the postgres user: it needs exactly these capabilities.
+    read_only: false
+    cap_add:
+      - CHOWN
+      - FOWNER
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+    environment:
+      POSTGRES_USER: aipr
+      POSTGRES_DB: aipr
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_owner_password
+    secrets:
+      - postgres_owner_password
+      - postgres_app_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+      - ./docker/postgres/grants.sql:/docker-entrypoint-initdb.d/20-grants.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aipr -d aipr"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    <<: *service
+    image: redis:7-alpine
+    # The queue is rebuilt from the database if Redis is lost (docs/operations.md), but persistence makes that rare.
+    # The password comes from a config file that is a secret (an `include`), so it is not on the command line. The image's
+    # entrypoint hands /data to the redis user and drops root only when the command starts with redis-server.
+    command: ["redis-server", "--appendonly", "yes", "--include", "/run/secrets/redis_conf"]
+    secrets:
+      - redis_password
+      - redis_conf
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'redis-cli -a "$$(cat /run/secrets/redis_password)" --no-auth-warning ping | grep -q PONG',
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    read_only: false
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+
+  # Applies pending migrations as the owner role, then exits. api and worker start only after it succeeded.
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: migrate
+    image: ai-pr-review/migrate:${VERSION:-latest}
+    restart: "no"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      MIGRATION_DATABASE_URL_FILE: /run/secrets/migration_database_url
+    secrets:
+      - migration_database_url
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: api
+    image: ai-pr-review/api:${VERSION:-latest}
+    environment:
+      <<: *node-env
+      API_PUBLIC_URL: ${PUBLIC_URL}
+      TRUST_PROXY: "true"
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:?set GITHUB_CLIENT_ID in .env.production}
+      GITHUB_CLIENT_SECRET_FILE: /run/secrets/github_client_secret
+      GITHUB_WEBHOOK_SECRET_FILE: /run/secrets/github_webhook_secret
+      SESSION_SECRET_FILE: /run/secrets/session_secret
+      METRICS_TOKEN_FILE: /run/secrets/metrics_token
+      GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
+      QUOTA_RUNS_PER_DAY: ${QUOTA_RUNS_PER_DAY:-200}
+      QUOTA_TOKENS_PER_DAY: ${QUOTA_TOKENS_PER_DAY:-2000000}
+    secrets:
+      - database_url
+      - redis_url
+      - github_app_private_key
+      - github_client_secret
+      - github_webhook_secret
+      - session_secret
+      - encryption_key
+      - metrics_token
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: worker
+    image: ai-pr-review/worker:${VERSION:-latest}
+    environment:
+      <<: *node-env
+      GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      QUOTA_RUNS_PER_DAY: ${QUOTA_RUNS_PER_DAY:-200}
+      QUOTA_TOKENS_PER_DAY: ${QUOTA_TOKENS_PER_DAY:-2000000}
+    secrets:
+      - database_url
+      - redis_url
+      - github_app_private_key
+      - encryption_key
+    # Give a review time to finish when the container is stopped (SHUTDOWN_GRACE_SECONDS, 30 by default).
+    stop_grace_period: 45s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  web:
+    <<: *service
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: web
+    image: ai-pr-review/web:${VERSION:-latest}
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    # nginx writes its pid and temporary files under /tmp (see tmpfs above).
+    depends_on:
+      api:
+        condition: service_healthy
+
+secrets:
+  postgres_owner_password:
+    file: ./secrets/postgres_owner_password
+  postgres_app_password:
+    file: ./secrets/postgres_app_password
+  migration_database_url:
+    file: ./secrets/migration_database_url
+  database_url:
+    file: ./secrets/database_url
+  redis_password:
+    file: ./secrets/redis_password
+  redis_conf:
+    file: ./secrets/redis_conf
+  redis_url:
+    file: ./secrets/redis_url
+  github_app_private_key:
+    file: ./secrets/github_app_private_key
+  github_client_secret:
+    file: ./secrets/github_client_secret
+  github_webhook_secret:
+    file: ./secrets/github_webhook_secret
+  session_secret:
+    file: ./secrets/session_secret
+  encryption_key:
+    file: ./secrets/encryption_key
+  metrics_token:
+    file: ./secrets/metrics_token
+
+volumes:
+  postgres-data:
+  redis-data:

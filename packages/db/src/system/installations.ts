@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { AccountType, InstallationStatus } from "@ai-pr-review/shared";
 import type { Database } from "../client";
 import { installations } from "../schema";
@@ -11,6 +11,10 @@ export interface InstallationInput {
   /** Defaults to `active` for a new installation; an existing one keeps its status unless given. */
   status?: InstallationStatus;
 }
+
+/** `status_changed_at` moves only when the status really changes, so a repeated event cannot postpone a purge. */
+const changedIfDifferent = (status: InstallationStatus) =>
+  sql`case when ${installations.status} <> ${status} then now() else ${installations.statusChangedAt} end`;
 
 /** Creates or refreshes an installation from a GitHub installation event. */
 export async function upsertInstallationFromGitHub(
@@ -25,7 +29,9 @@ export async function upsertInstallationFromGitHub(
       set: {
         accountLogin: input.accountLogin,
         accountType: input.accountType,
-        ...(input.status ? { status: input.status } : {}),
+        ...(input.status
+          ? { status: input.status, statusChangedAt: changedIfDifferent(input.status) }
+          : {}),
       },
     })
     .returning();
@@ -51,7 +57,7 @@ export async function setInstallationStatus(
 ): Promise<Installation | undefined> {
   const [row] = await db
     .update(installations)
-    .set({ status })
+    .set({ status, statusChangedAt: changedIfDifferent(status) })
     .where(eq(installations.githubInstallationId, githubInstallationId))
     .returning();
   return row;

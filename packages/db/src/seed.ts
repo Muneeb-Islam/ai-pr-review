@@ -2,9 +2,9 @@
 // functions, so it also exercises the lifecycle rules. Everything here is fake: the "credential" is a
 // placeholder string, not a key, and no real repositories are referenced.
 import { eq } from "drizzle-orm";
-import type { AgentId, RunStatus } from "@ai-pr-review/shared";
+import type { AgentId, CoverageSummary, RunStatus } from "@ai-pr-review/shared";
 import type { Database } from "./client";
-import { installations } from "./schema";
+import { installations, reviewRuns } from "./schema";
 import {
   appendAuditLog,
   createRun,
@@ -19,7 +19,7 @@ import {
   upsertRepository,
   type NewFinding,
 } from "./tenant";
-import { replaceUserInstallations, upsertInstallationFromGitHub, upsertUser } from "./system";
+import { replaceUserAccess, upsertInstallationFromGitHub, upsertUser } from "./system";
 import type { Repo, Run } from "./types";
 
 export const DEMO_GITHUB_INSTALLATION_ID = 9_000_001;
@@ -57,7 +57,6 @@ export async function seedDemoData(db: Database, now: Date = new Date()): Promis
     login: "demo-dev",
     avatarUrl: "https://avatars.githubusercontent.com/u/9100001",
   });
-  await replaceUserInstallations(db, user.id, [{ installationId: instId, role: "admin" }], now);
 
   const api = await upsertRepository(db, instId, {
     githubRepoId: 9_200_001,
@@ -77,6 +76,21 @@ export async function seedDemoData(db: Database, now: Date = new Date()): Promis
     defaultBranch: "master",
     isPrivate: false,
   });
+
+  // The demo user reaches all three repositories (the dashboard shows what GitHub says a user can access).
+  await replaceUserAccess(
+    db,
+    user.id,
+    {
+      installations: [{ installationId: instId, role: "admin" }],
+      repositories: [api, web, docs].map((repo) => ({
+        installationId: instId,
+        repoId: repo.id,
+        role: "admin" as const,
+      })),
+    },
+    now,
+  );
 
   await upsertRepoSettings(
     db,
@@ -115,6 +129,8 @@ export async function seedDemoData(db: Database, now: Date = new Date()): Promis
       findings?: NewFinding[];
       agents?: Array<{ agent: AgentId; status: "ok" | "failed" | "timeout" | "invalid_output" }>;
       reason?: string;
+      /** What the Test Coverage agent measured (or why it could not). */
+      coverage?: CoverageSummary;
     } = {},
   ): Promise<Run> {
     runs += 1;
@@ -181,6 +197,12 @@ export async function seedDemoData(db: Database, now: Date = new Date()): Promis
         headSha: created.headSha,
       });
     }
+    if (opts.coverage) {
+      await db
+        .update(reviewRuns)
+        .set({ coverage: opts.coverage })
+        .where(eq(reviewRuns.id, created.id));
+    }
     return transitionRun(db, instId, created.id, status, {
       at: new Date(agentStart + 3_000),
       ...(opts.reason ? { reason: opts.reason } : {}),
@@ -210,6 +232,41 @@ export async function seedDemoData(db: Database, now: Date = new Date()): Promis
   await run(api, 100, "superseded", t(2 * DAY + 3 * HOUR), { headSha: "1".repeat(40) });
   const reviewed = await run(api, 100, "completed", t(2 * DAY), {
     headSha: "2".repeat(40),
+    coverage: {
+      status: "measured",
+      changedLineCoverage: 0.72,
+      coveredLines: 18,
+      totalLines: 25,
+      artifact: { name: "coverage", runId: 9_000_031 },
+      observations: [],
+      files: [
+        {
+          path: "src/module1.ts",
+          status: "measured",
+          coveredLines: 6,
+          totalLines: 12,
+          uncovered: [
+            { start: 14, end: 17 },
+            { start: 30, end: 31 },
+          ],
+          uncoveredFunctions: ["refund"],
+        },
+        {
+          path: "src/module2.ts",
+          status: "measured",
+          coveredLines: 12,
+          totalLines: 13,
+          uncovered: [{ start: 40, end: 40 }],
+        },
+        {
+          path: "src/module3.ts",
+          status: "not_in_report",
+          coveredLines: 0,
+          totalLines: 0,
+          uncovered: [],
+        },
+      ],
+    },
     agents: [
       { agent: "code_review", status: "ok" },
       { agent: "security", status: "ok" },
@@ -239,9 +296,17 @@ export async function seedDemoData(db: Database, now: Date = new Date()): Promis
     headSha: "2".repeat(40),
     trigger: "dashboard_rerun",
     parentRunId: reviewed.id,
-    findings: [finding(1, { posted: true })],
+    // The same commit and the same finding: the comment is already on the pull request, so it is not posted again.
+    findings: [finding(1)],
   });
   await run(api, 101, "partial", t(1 * DAY), {
+    coverage: {
+      status: "not_available",
+      reasonCode: "no_artifact",
+      reason:
+        'No CI run for this commit uploaded an artifact named "coverage". Upload the LCOV report from CI with actions/upload-artifact.',
+      observations: [],
+    },
     agents: [
       { agent: "code_review", status: "ok" },
       { agent: "test_coverage", status: "timeout" },

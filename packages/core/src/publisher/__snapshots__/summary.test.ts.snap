@@ -1,0 +1,160 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`summary snapshots > mixed severities, test suggestion, notes and suppressed counts 1`] = `
+"<!-- ai-pr-review:summary -->
+
+## AI PR Review
+
+**Status:** Completed · commit \`1234567\`
+
+5 findings: 1 critical, 1 high, 2 medium, 1 low.
+
+| Critical | High | Medium | Low | Info |
+|:-:|:-:|:-:|:-:|:-:|
+| 1 | 1 | 2 | 1 | 0 |
+
+### Findings
+
+#### Critical (1)
+- **SQL built from user input** · \`src/a.ts:1\` · _Code Review_ · inline comment
+  - The result is wrong for empty input.
+  - Suggestion: Check for empty input.
+
+#### High (1)
+- **Finding 2** · \`src/a.ts:2\` · _Code Review_ · inline comment
+  - The result is wrong for empty input.
+  - Suggestion: Check for empty input.
+
+#### Medium (1)
+- **Finding 3** · _Code Review_
+  - The result is wrong for empty input.
+  - Suggestion: Check for empty input.
+
+<details>
+<summary>Low (1)</summary>
+
+- **Finding 4** · \`src/a.ts:4\` · _Code Review_
+  - The result is wrong for empty input.
+  - Suggestion: Check for empty input.
+
+</details>
+
+### Suggested tests
+
+_These are suggestions from reading the diff and the existing tests. They are not measured coverage._
+
+- **Suggested missing test** \`src/a.ts:5\`: No test for empty input
+  - Call add() with an empty array and expect 0.
+
+### Checks
+
+| Check | Status |
+|---|---|
+| Code Review | Done |
+| Test Coverage | Not available yet |
+| Security | Off |
+
+<details>
+<summary>Notes (1)</summary>
+
+- The new helper is used in two places. _(Code Review)_
+
+</details>
+
+<sub>Left out: 2 below the severity or confidence threshold, 1 duplicates.</sub>
+
+<sub>[View this run in the dashboard](https://dash.example/runs/abc) · Advisory only: AI can be wrong, so verify before acting.</sub>"
+`;
+
+exports[`summary snapshots > no findings 1`] = `
+"<!-- ai-pr-review:summary -->
+
+## AI PR Review
+
+**Status:** Completed · commit \`1234567\`
+
+No findings.
+
+### Checks
+
+| Check | Status |
+|---|---|
+| Code Review | Done |
+| Test Coverage | Not available yet |
+| Security | Off |
+
+<sub>[View this run in the dashboard](https://dash.example/runs/abc) · Advisory only: AI can be wrong, so verify before acting.</sub>"
+`;
+
+exports[`summary snapshots > partial run with warnings, skipped files and a limited review 1`] = `
+"<!-- ai-pr-review:summary -->
+
+## AI PR Review
+
+**Status:** Partial · commit \`1234567\`
+
+1 finding: 1 high.
+
+_Draft pull request: findings are listed here only. Inline comments are off for drafts._
+
+_Limited review: Only 40 of 52 files were reviewed._
+
+| Critical | High | Medium | Low | Info |
+|:-:|:-:|:-:|:-:|:-:|
+| 0 | 1 | 0 | 0 | 0 |
+
+### Security
+
+The Security agent is not available.
+
+_Security review is advisory: it is not a replacement for SAST or dependency scanning._
+
+### Findings
+
+#### High (1)
+- **Finding 1** · \`src/a.ts:1\` · _Code Review_ · inline comment
+  - The result is wrong for empty input.
+  - Suggestion: Check for empty input.
+
+### Checks
+
+| Check | Status |
+|---|---|
+| Code Review | Timed out |
+| Test Coverage | Not available yet |
+| Security | Not available yet |
+
+<details>
+<summary>Files not reviewed (2)</summary>
+
+- \`package-lock.json\`: lockfile
+- \`dist/app.js\`: build output
+
+</details>
+
+### Warnings
+
+- Code Review: the AI provider timed out.
+
+<sub>[View this run in the dashboard](https://dash.example/runs/abc) · Advisory only: AI can be wrong, so verify before acting.</sub>"
+`;
+
+exports[`summary snapshots > skipped 1`] = `
+"<!-- ai-pr-review:summary -->
+
+## AI PR Review
+
+**Status:** Skipped · commit \`1234567\`
+
+Not reviewed: The pull request is too large to review reliably.
+
+### Checks
+
+| Check | Status |
+|---|---|
+| Code Review | Off |
+| Test Coverage | Off |
+| Security | Off |
+
+<sub>[View this run in the dashboard](https://dash.example/runs/abc) · Advisory only: AI can be wrong, so verify before acting.</sub>"
+`;

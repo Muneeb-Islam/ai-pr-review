@@ -50,22 +50,58 @@ describe("api health endpoints", () => {
 });
 
 describe("api env", () => {
+  const valid = {
+    DATABASE_URL: "postgres://u:p@localhost:5432/db",
+    REDIS_URL: "redis://localhost:6379",
+    GITHUB_APP_ID: "1",
+    GITHUB_APP_PRIVATE_KEY: "pem",
+    GITHUB_WEBHOOK_SECRET: "s",
+    GITHUB_CLIENT_ID: "client",
+    GITHUB_CLIENT_SECRET: "client-secret",
+    SESSION_SECRET: "x".repeat(32),
+    ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+  };
+
   it("fails with the NAMES of missing variables only", () => {
     expect(() => loadApiEnv({})).toThrow(
-      "Missing required environment variables: DATABASE_URL, GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_WEBHOOK_SECRET, REDIS_URL",
+      "Missing required environment variables: DATABASE_URL, ENCRYPTION_KEY, GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_WEBHOOK_SECRET, REDIS_URL, SESSION_SECRET",
     );
   });
 
+  it("rejects a weak session secret and a malformed encryption key without echoing them", () => {
+    const weak = { ...valid, SESSION_SECRET: "short-secret", ENCRYPTION_KEY: "not-a-key-at-all" };
+    let message = "";
+    try {
+      loadApiEnv(weak);
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toBe(
+      "Invalid environment variables (values not shown): ENCRYPTION_KEY, SESSION_SECRET",
+    );
+    expect(message).not.toContain("short-secret");
+    expect(message).not.toContain("not-a-key-at-all");
+    // 16 bytes are not enough for AES-256.
+    expect(() =>
+      loadApiEnv({ ...valid, ENCRYPTION_KEY: Buffer.alloc(16, 1).toString("base64") }),
+    ).toThrow("ENCRYPTION_KEY");
+  });
+
   it("loads defaults for the optional ones", () => {
-    const env = loadApiEnv({
-      DATABASE_URL: "postgres://u:p@localhost:5432/db",
-      REDIS_URL: "redis://localhost:6379",
-      GITHUB_APP_ID: "1",
-      GITHUB_APP_PRIVATE_KEY: "pem",
-      GITHUB_WEBHOOK_SECRET: "s",
-    });
+    const env = loadApiEnv(valid);
     expect(env.WEBHOOK_MAX_BODY_BYTES).toBe(5 * 1024 * 1024);
     expect(env.PORT).toBe(3000);
     expect(env.HOST).toBe("127.0.0.1");
+    expect(env.API_PUBLIC_URL).toBe("http://localhost:3000");
+    expect(env.SESSION_IDLE_TIMEOUT_MINUTES).toBe(120);
+    expect(env.SESSION_ABSOLUTE_TIMEOUT_HOURS).toBe(168);
+    expect(env.ACCESS_CACHE_TTL_SECONDS).toBe(600);
+    expect(env.ENCRYPTION_KEY_VERSION).toBe(1);
+    expect(env.TRUST_PROXY).toBe(false);
+  });
+
+  it("reads TRUST_PROXY as a boolean", () => {
+    expect(loadApiEnv({ ...valid, TRUST_PROXY: "true" }).TRUST_PROXY).toBe(true);
+    expect(loadApiEnv({ ...valid, TRUST_PROXY: "false" }).TRUST_PROXY).toBe(false);
   });
 });

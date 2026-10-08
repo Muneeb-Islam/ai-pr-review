@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import type { RunStatus, RunTrigger, Severity, TokenUsage } from "@ai-pr-review/shared";
 import type { Database } from "../client";
 import { IllegalTransitionError, InvalidInputError, NotFoundError } from "../errors";
@@ -6,7 +6,7 @@ import { ACTIVE_STATUSES, isTerminalStatus, statusesThatCanReach } from "../life
 import { afterCursor, clampLimit, toPage, type Page } from "../pagination";
 import { findings, repositories, reviewRuns } from "../schema";
 import { inInstallations, isUuid, type InstallationIds } from "../scope";
-import type { Run } from "../types";
+import type { Run, StoredFinding } from "../types";
 
 export interface NewRun {
   repoId: string;
@@ -80,6 +80,14 @@ export interface SupersedingRunResult {
   duplicate: boolean;
 }
 
+/** A decision made inside the run's own transaction (quota, queue depth); `reason` becomes the skipped run's reason. */
+export type Admission = { allowed: true } | { allowed: false; reason: string };
+
+/** The run was not created because admission was refused (Phase 15, AC-23). */
+export interface RejectedRun {
+  rejected: string;
+}
+
 /**
  * Creates a `queued` run for a pull request and, in the same transaction, supersedes every other queued or
  * running run of that pull request (PL-06, AC-15). A transaction-scoped advisory lock per pull request makes
@@ -87,12 +95,28 @@ export interface SupersedingRunResult {
  *
  * If an active run with the same head SHA and trigger already exists, it is returned untouched and nothing is
  * created (`duplicate: true`): the idempotency that keeps a retried event from queueing the same review twice.
+ *
+ * With `admit`, a new run is only created when it says so, decided in the same transaction under a lock per
+ * installation: a burst of events cannot all pass a limit that each would pass alone (daily quota, queue depth).
+ * A refusal returns `{ rejected: reason }` and creates nothing; a duplicate never reaches the decision.
  */
 export async function createRunSupersedingOlder(
   db: Database,
   installationId: string,
   input: Omit<NewRun, "skip">,
-): Promise<SupersedingRunResult> {
+): Promise<SupersedingRunResult>;
+export async function createRunSupersedingOlder(
+  db: Database,
+  installationId: string,
+  input: Omit<NewRun, "skip">,
+  admit: (tx: Database) => Promise<Admission>,
+): Promise<SupersedingRunResult | RejectedRun>;
+export async function createRunSupersedingOlder(
+  db: Database,
+  installationId: string,
+  input: Omit<NewRun, "skip">,
+  admit?: (tx: Database) => Promise<Admission>,
+): Promise<SupersedingRunResult | RejectedRun> {
   if (!isUuid(installationId) || !isUuid(input.repoId)) throw new NotFoundError("Repository");
   if (!Number.isInteger(input.prNumber) || input.prNumber < 1) {
     throw new InvalidInputError("prNumber must be a positive integer");
@@ -122,6 +146,14 @@ export async function createRunSupersedingOlder(
       (r) => r.headSha === input.headSha && r.trigger === input.trigger,
     );
     if (duplicate) return { run: duplicate, superseded: [], duplicate: true };
+
+    if (admit) {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`installation:${installationId}`}, 0))`,
+      );
+      const decision = await admit(txDb);
+      if (!decision.allowed) return { rejected: decision.reason };
+    }
 
     const run = await createRun(txDb, installationId, input);
     const superseded: Run[] = [];
@@ -285,6 +317,11 @@ export async function updateRunDetails(
 
 export interface RunFilters {
   repoId?: string;
+  /**
+   * Restrict to these repositories (the ones the caller may reach; an installation can hold repositories a
+   * member cannot see). Combined with `repoId`, both must match. An empty list matches nothing.
+   */
+  repoIds?: readonly string[];
   status?: RunStatus | readonly RunStatus[];
   baseRef?: string;
   triggeredBy?: string;
@@ -311,6 +348,8 @@ export async function listRuns(
   if (filters.repoId !== undefined && !isUuid(filters.repoId))
     return { items: [], nextCursor: null };
   if (statuses?.length === 0) return { items: [], nextCursor: null };
+  const repoIds = filters.repoIds?.filter(isUuid);
+  if (repoIds?.length === 0) return { items: [], nextCursor: null };
 
   const rows = await db
     .select()
@@ -319,6 +358,7 @@ export async function listRuns(
       and(
         inInstallations(reviewRuns.installationId, installationIds),
         filters.repoId ? eq(reviewRuns.repoId, filters.repoId) : undefined,
+        repoIds ? inArray(reviewRuns.repoId, repoIds) : undefined,
         statuses ? inArray(reviewRuns.status, statuses) : undefined,
         filters.baseRef ? eq(reviewRuns.baseRef, filters.baseRef) : undefined,
         filters.triggeredBy ? eq(reviewRuns.triggeredBy, filters.triggeredBy) : undefined,
@@ -389,4 +429,54 @@ export async function getLatestRunPerRepo(
       ),
     )
     .orderBy(reviewRuns.repoId, desc(reviewRuns.queuedAt), desc(reviewRuns.id));
+}
+
+/** The last finished review of a pull request before a given run, with the findings it reported. */
+export interface PreviousReview {
+  run: Run;
+  /** Findings the run reported (not the suppressed ones), most severe first. */
+  findings: StoredFinding[];
+}
+
+/**
+ * The review that came before `run` on the same pull request: the newest earlier run that completed or was partial
+ * (a failed, skipped, superseded or cancelled run reported nothing to compare with). Its findings are what the new
+ * review is compared with (FR-37) and what an inline comment may already exist for (design §12).
+ */
+export async function getPreviousReview(
+  db: Database,
+  installationIds: InstallationIds,
+  run: Pick<Run, "id" | "repoId" | "prNumber" | "queuedAt">,
+): Promise<PreviousReview | undefined> {
+  if (!isUuid(run.repoId) || !isUuid(run.id)) return undefined;
+  const [previous] = await db
+    .select()
+    .from(reviewRuns)
+    .where(
+      and(
+        inInstallations(reviewRuns.installationId, installationIds),
+        eq(reviewRuns.repoId, run.repoId),
+        eq(reviewRuns.prNumber, run.prNumber),
+        inArray(reviewRuns.status, ["completed", "partial"]),
+        or(
+          lt(reviewRuns.queuedAt, run.queuedAt),
+          and(eq(reviewRuns.queuedAt, run.queuedAt), lt(reviewRuns.id, run.id)),
+        ),
+      ),
+    )
+    .orderBy(desc(reviewRuns.queuedAt), desc(reviewRuns.id))
+    .limit(1);
+  if (!previous) return undefined;
+  const rows = await db
+    .select()
+    .from(findings)
+    .where(
+      and(
+        eq(findings.runId, previous.id),
+        inInstallations(findings.installationId, installationIds),
+        isNull(findings.suppressedReason),
+      ),
+    )
+    .orderBy(findings.severity, findings.filePath, findings.startLine, findings.id);
+  return { run: previous, findings: rows };
 }

@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { upsertRepoSettings } from "@ai-pr-review/db";
 import { getWebhookDelivery } from "@ai-pr-review/db/system";
 import { createTestDatabase, type TestDatabase } from "@ai-pr-review/db/testing";
+import { InMemoryRunSignals } from "@ai-pr-review/queue";
 import { createLogger, InMemoryJobQueue } from "@ai-pr-review/shared";
 import { buildApp } from "../app";
 import { WebhookService } from "./service";
@@ -15,6 +16,7 @@ let t: TestDatabase;
 const logger = createLogger({}, () => undefined);
 let github: FakeGateway;
 let queue: InMemoryJobQueue;
+let signals: InMemoryRunSignals;
 let quota: QuotaCheck | undefined;
 let service: WebhookService;
 let app: ReturnType<typeof buildApp>;
@@ -24,10 +26,12 @@ const MAX_BODY = 64 * 1024;
 function build(): void {
   github = new FakeGateway();
   queue = new InMemoryJobQueue();
+  signals = new InMemoryRunSignals();
   service = new WebhookService({
     db: t.db,
     github,
     queue,
+    signals,
     logger,
     publicUrl: "http://localhost:5173",
     quota: (input) => (quota ?? (async () => ({ allowed: true as const })))(input),
@@ -528,6 +532,35 @@ describe("pull request events", () => {
     expect(older!.status_reason).toContain(newer!.id);
     expect(newer).toMatchObject({ status: "queued", head_sha: sha(3) });
     expect(queue.jobs).toEqual([older!.id, newer!.id]);
+  });
+
+  it("announces new, skipped and superseded runs to the dashboard and cancels the superseded one (PL-14)", async () => {
+    await deliver("pull_request", prEvent("opened", { headSha: sha(1) }));
+    await deliver("pull_request", prEvent("synchronize", { headSha: sha(3) }));
+    const [older, newer] = await runs();
+    expect(signals.updated.map((e) => [e.runId, e.status])).toEqual([
+      [older!.id, "queued"],
+      [older!.id, "superseded"],
+      [newer!.id, "queued"],
+    ]);
+    expect(new Set(signals.updated.map((e) => e.repoId)).size).toBe(1);
+    expect(signals.cancelled).toEqual([
+      { type: "run.cancel", runId: older!.id, reason: "superseded" },
+    ]);
+
+    // A guard's refusal is a run too: it must show up without a refresh.
+    await deliver("pull_request", prEvent("opened", { number: 9, headSha: sha(7), fork: true }));
+    const skipped = (await runs()).find((r) => r.pr_number === 9)!;
+    expect(signals.updated.at(-1)).toMatchObject({ runId: skipped.id, status: "skipped" });
+  });
+
+  it("does not announce a duplicate delivery again", async () => {
+    await deliver("pull_request", prEvent("opened"));
+    expect(signals.updated).toHaveLength(1);
+    // The same head and trigger again (a different delivery) reuses the active run: nothing changed.
+    await deliver("pull_request", prEvent("opened"), "another-delivery");
+    expect(signals.updated).toHaveLength(1);
+    expect(signals.cancelled).toEqual([]);
   });
 
   it("supersedes a running run too, and leaves other PRs alone", async () => {

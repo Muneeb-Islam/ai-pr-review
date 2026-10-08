@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { Finding, Severity, SuppressReason, AgentId, Category } from "@ai-pr-review/shared";
 import type { Database } from "../client";
 import { InvalidInputError } from "../errors";
@@ -6,7 +6,7 @@ import { afterCursor, clampLimit, toPage, type Page } from "../pagination";
 import { findings, reviewRuns } from "../schema";
 import { inInstallations, isUuid, type InstallationIds } from "../scope";
 import type { StoredFinding } from "../types";
-import { requireRun, truncateEvidence } from "./internal";
+import { findingRow, requireRun } from "./internal";
 
 /** A finding as produced by the engine (`Finding` in packages/shared) plus how it was handled. */
 export type NewFinding = Omit<Finding, "id" | "sourceCommitSha"> & {
@@ -32,28 +32,7 @@ export async function insertFindings(
   }
   return db
     .insert(findings)
-    .values(
-      input.map((f) => ({
-        installationId,
-        runId,
-        repoId: run.repoId,
-        agent: f.agent,
-        category: f.category,
-        severity: f.severity,
-        confidence: f.confidence,
-        title: f.title,
-        filePath: f.filePath ?? null,
-        startLine: f.startLine ?? null,
-        endLine: f.endLine ?? null,
-        evidence: truncateEvidence(f.evidence),
-        impact: f.impact,
-        recommendation: f.recommendation,
-        suggestedTest: f.suggestedTest ?? null,
-        fingerprint: f.fingerprint,
-        posted: f.posted ?? false,
-        suppressedReason: f.suppressedReason ?? null,
-      })),
-    )
+    .values(input.map((f) => findingRow(installationId, runId, run.repoId, f)))
     .returning();
 }
 
@@ -183,6 +162,41 @@ export async function countSuppressedFindings(
   return out;
 }
 
+/**
+ * Non-suppressed findings per run and severity, for a page of runs (the runs list shows a count per run).
+ * Runs without findings are absent from the result.
+ */
+export async function countFindingsByRun(
+  db: Database,
+  installationIds: InstallationIds,
+  runIds: readonly string[],
+): Promise<Map<string, Partial<Record<Severity, number>>>> {
+  const ids = runIds.filter(isUuid);
+  const out = new Map<string, Partial<Record<Severity, number>>>();
+  if (ids.length === 0) return out;
+  const rows = await db
+    .select({
+      runId: findings.runId,
+      severity: findings.severity,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(findings)
+    .where(
+      and(
+        inArray(findings.runId, ids),
+        inInstallations(findings.installationId, installationIds),
+        isNull(findings.suppressedReason),
+      ),
+    )
+    .groupBy(findings.runId, findings.severity);
+  for (const row of rows) {
+    const counts = out.get(row.runId) ?? {};
+    counts[row.severity] = row.count;
+    out.set(row.runId, counts);
+  }
+  return out;
+}
+
 /** Marks findings as posted to GitHub. Suppressed findings are never marked. Returns how many changed. */
 export async function markFindingsPosted(
   db: Database,
@@ -203,4 +217,80 @@ export async function markFindingsPosted(
     )
     .returning({ id: findings.id });
   return rows.length;
+}
+
+/** A finding of one run, as the engine identifies it (the database id is not known to the publisher). */
+export interface FindingKey {
+  agent: AgentId;
+  fingerprint: string;
+}
+
+const keyMatch = (keys: readonly FindingKey[]) =>
+  or(...keys.map((k) => and(eq(findings.agent, k.agent), eq(findings.fingerprint, k.fingerprint))));
+
+/**
+ * Marks the accepted findings of a run as posted (an inline comment is on the pull request). Idempotent:
+ * safe to repeat for a re-processed run. Suppressed findings are never marked. Returns how many changed.
+ */
+export async function markRunFindingsPosted(
+  db: Database,
+  installationId: string,
+  runId: string,
+  keys: readonly FindingKey[],
+): Promise<number> {
+  if (!isUuid(installationId) || !isUuid(runId) || keys.length === 0) return 0;
+  const rows = await db
+    .update(findings)
+    .set({ posted: true })
+    .where(
+      and(
+        eq(findings.installationId, installationId),
+        eq(findings.runId, runId),
+        isNull(findings.suppressedReason),
+        keyMatch(keys),
+      ),
+    )
+    .returning({ id: findings.id });
+  return rows.length;
+}
+
+/**
+ * Turns accepted findings of a run into suppressed ones: the publisher found that they cannot be posted (their
+ * line is not in the diff). Findings already posted are left alone. Returns how many changed.
+ */
+export async function suppressRunFindings(
+  db: Database,
+  installationId: string,
+  runId: string,
+  keys: readonly FindingKey[],
+  reason: SuppressReason,
+): Promise<number> {
+  if (!isUuid(installationId) || !isUuid(runId) || keys.length === 0) return 0;
+  return db.transaction(async (tx) => {
+    // A suppressed row with the same identity would collide with the one being flipped.
+    await tx
+      .delete(findings)
+      .where(
+        and(
+          eq(findings.installationId, installationId),
+          eq(findings.runId, runId),
+          eq(findings.suppressedReason, reason),
+          keyMatch(keys),
+        ),
+      );
+    const rows = await tx
+      .update(findings)
+      .set({ suppressedReason: reason })
+      .where(
+        and(
+          eq(findings.installationId, installationId),
+          eq(findings.runId, runId),
+          isNull(findings.suppressedReason),
+          eq(findings.posted, false),
+          keyMatch(keys),
+        ),
+      )
+      .returning({ id: findings.id });
+    return rows.length;
+  });
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "installations" ADD COLUMN "status_changed_at" timestamp (3) with time zone DEFAULT now() NOT NULL;

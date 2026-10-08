@@ -3,6 +3,7 @@ import type {
   auditLog,
   findingFeedback,
   findings,
+  installationSettings,
   installations,
   postedComments,
   providerCredentials,
@@ -15,6 +16,7 @@ import type {
 export type Installation = typeof installations.$inferSelect;
 export type Repo = typeof repositories.$inferSelect;
 export type RepoSettingsRecord = typeof repoSettings.$inferSelect;
+export type InstallationSettingsRecord = typeof installationSettings.$inferSelect;
 export type Run = typeof reviewRuns.$inferSelect;
 export type AgentRunRecord = typeof agentRuns.$inferSelect;
 export type StoredFinding = typeof findings.$inferSelect;

@@ -71,6 +71,23 @@ describe("migrations", () => {
     );
   });
 
+  it("add the nullable coverage column to review_runs (Phase 11)", async () => {
+    const rows = await query<{ data_type: string; is_nullable: string }>(
+      "select data_type, is_nullable from information_schema.columns where table_name = 'review_runs' and column_name = 'coverage'",
+    );
+    expect(rows).toEqual([{ data_type: "jsonb", is_nullable: "YES" }]);
+  });
+
+  it("add the nullable lifecycle columns to review_runs (Phase 13)", async () => {
+    const rows = await query<{ column_name: string; data_type: string; is_nullable: string }>(
+      "select column_name, data_type, is_nullable from information_schema.columns where table_name = 'review_runs' and column_name in ('tracking', 'final_review') order by column_name",
+    );
+    expect(rows).toEqual([
+      { column_name: "final_review", data_type: "jsonb", is_nullable: "YES" },
+      { column_name: "tracking", data_type: "jsonb", is_nullable: "YES" },
+    ]);
+  });
+
   it("use the column names of design §5", async () => {
     const columns = async (table: string) =>
       (
@@ -187,13 +204,32 @@ describe("migrations", () => {
       "posted_comments",
       "finding_feedback",
     ]);
+    // Phase 4 adds the idle-timeout column to sessions (the absolute end is `expires_at`). Phase 8 adds the
+    // worker's bookkeeping to review runs: the skipped-file list, the heartbeat and the attempt counter. Phase 11
+    // adds the Test Coverage measurement. Phase 13 adds the previous-finding tracking and the Final Review counts.
+    const extraColumns: Record<string, string[]> = {
+      sessions: ["last_seen_at"],
+      // Phase 15: when the status last changed, which schedules the purge of an uninstalled installation.
+      installations: ["status_changed_at"],
+      review_runs: [
+        "skipped_files",
+        "heartbeat_at",
+        "attempts",
+        "coverage",
+        "tracking",
+        "final_review",
+      ],
+    };
     for (const [table, wanted] of Object.entries(expected)) {
       const actual = await columns(table);
       expect(actual, table).toEqual(expect.arrayContaining(wanted));
       expect(
         actual.filter((c) => !wanted.includes(c)),
         table,
-      ).toEqual(addsInstallationId.has(table) ? ["installation_id"] : []);
+      ).toEqual([
+        ...(addsInstallationId.has(table) ? ["installation_id"] : []),
+        ...(extraColumns[table] ?? []),
+      ]);
     }
   });
 

@@ -4,7 +4,7 @@ AI PR Review Platform — a GitHub App with a backend, a job queue, a PostgreSQL
 
 This document **supersedes the delivery model of the PRD** (`PRD-v0.1.md`). The PRD's review behaviour (agents, findings, thresholds, GitHub output, security rules) still applies and is reused. What changes is *how it is delivered*: a hosted platform instead of a stateless GitHub Action. Where this document and the PRD disagree, this document wins.
 
-Decisions behind the change are in `decision-log.md`; architecture is in `design.md`; delivery plan is in `../PHASES.md`.
+Decisions behind the change are in `decision-log.md`; architecture is in `design.md`.
 
 ## 1. Product summary
 

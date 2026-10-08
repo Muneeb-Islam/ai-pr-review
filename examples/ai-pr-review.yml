@@ -23,7 +23,7 @@ agents:
 
 coverage:
   artifact_name: coverage # name of the GitHub Actions artifact that holds the LCOV report
-  lcov_path: lcov.info # path of the LCOV file inside that artifact
+  lcov_path: lcov.info # path of the LCOV file inside that artifact (see examples/upload-coverage.yml)
 
 fork_prs: skip # skip | review
 

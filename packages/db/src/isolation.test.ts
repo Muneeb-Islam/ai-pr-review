@@ -6,6 +6,7 @@ import { IllegalTransitionError, InvalidInputError, NotFoundError } from "./erro
 import * as tenantApi from "./tenant";
 import {
   appendAuditLog,
+  countFindingsByRun,
   countSuppressedFindings,
   createRun,
   createRunSupersedingOlder,
@@ -13,34 +14,49 @@ import {
   findPostedCommentByFingerprint,
   getFinding,
   getInstallation,
+  getInstallationSettings,
   getLatestRunPerRepo,
   getRepoSettings,
   getRepository,
   getRepositoryByGitHubId,
   getRun,
+  getPreviousReview,
   getRunByCheckRunId,
   insertFindings,
   listAgentRuns,
   listAuditLog,
+  listAuditEntries,
+  listFindingsWithRuns,
+  getFindingWithRun,
+  summarizeFeedback,
+  findInlineCommentIds,
+  listPullHistory,
+  analyticsSummary,
+  analyticsTimeseries,
   listFeedback,
   listFindings,
   listFindingsForRun,
   listInstallations,
   listPostedComments,
+  listPostedFingerprints,
   listProviderCredentials,
   listRepositories,
   listRuns,
   listRunsForPullRequest,
   markFindingsPosted,
+  markRunFindingsPosted,
   putProviderCredential,
   recordAgentRun,
   recordPostedComment,
+  recordPostedComments,
   setAllRepositoriesActive,
   setFeedback,
+  suppressRunFindings,
   setRepositoriesActive,
   setRepositoryEnabled,
   transitionRun,
   updateRunDetails,
+  upsertInstallationSettings,
   upsertRepoSettings,
   upsertRepository,
 } from "./tenant";
@@ -74,6 +90,7 @@ async function bundle(label: string): Promise<Bundle> {
   await updateRunDetails(t.db, id, queuedRun.id, { checkRunId });
   const [unposted] = await insertFindings(t.db, id, queuedRun.id, [sampleFinding()]);
   await upsertRepoSettings(t.db, id, tenant.repo.id, { fork_prs: "review" }, tenant.user.id);
+  await upsertInstallationSettings(t.db, id, { provider: "deepseek" }, tenant.user.id);
   const credential = await putProviderCredential(t.db, id, {
     provider: "deepseek",
     ciphertext: Buffer.from(`ciphertext-${label}`),
@@ -155,6 +172,10 @@ const readCases: Record<string, ReadCase> = {
     expect(await getRepoSettings(t.db, [inst(v)], o.tenant.repo.id)).toBeUndefined();
     expect(await getRepoSettings(t.db, [inst(o)], o.tenant.repo.id)).toBeDefined();
   },
+  async getInstallationSettings(v, o) {
+    expect(await getInstallationSettings(t.db, [inst(v)], inst(o))).toBeUndefined();
+    expect(await getInstallationSettings(t.db, [inst(o)], inst(o))).toBeDefined();
+  },
   async getRun(v, o) {
     expect(await getRun(t.db, [inst(v)], o.full.run.id)).toBeUndefined();
     expect(await getRun(t.db, [inst(o)], o.full.run.id)).toBeDefined();
@@ -170,11 +191,24 @@ const readCases: Record<string, ReadCase> = {
       (await listRuns(t.db, [inst(v)], { severity: "high" })).items.map((r) => r.id),
     ).not.toContain(o.full.run.id);
     expect((await listRuns(t.db, [])).items).toEqual([]);
+    // A repository filter narrows within the scope and never widens it.
+    expect((await listRuns(t.db, [inst(v)], { repoIds: [o.tenant.repo.id] })).items).toEqual([]);
+    expect((await listRuns(t.db, [inst(o)], { repoIds: [] })).items).toEqual([]);
+    expect(
+      (await listRuns(t.db, [inst(o)], { repoIds: [o.tenant.repo.id] })).items.length,
+    ).toBeGreaterThan(0);
   },
   async listRunsForPullRequest(v, o) {
     const pr = o.full.run.prNumber;
     expect(await listRunsForPullRequest(t.db, [inst(v)], o.tenant.repo.id, pr)).toEqual([]);
     expect((await listRunsForPullRequest(t.db, [inst(o)], o.tenant.repo.id, pr)).length).toBe(2);
+  },
+  async getPreviousReview(v, o) {
+    expect(await getPreviousReview(t.db, [inst(v)], o.queuedRun)).toBeUndefined();
+    const previous = await getPreviousReview(t.db, [inst(o)], o.queuedRun);
+    expect(previous?.run.id).toBe(o.full.run.id);
+    // Only the findings the run reported: the suppressed one is not part of the comparison.
+    expect(previous?.findings.map((f) => f.id)).toEqual([o.full.finding.id]);
   },
   async getLatestRunPerRepo(v, o) {
     const mine = await getLatestRunPerRepo(t.db, [inst(v)]);
@@ -204,6 +238,12 @@ const readCases: Record<string, ReadCase> = {
       expect((await listFindings(t.db, [inst(o)], filters)).items.length).toBeGreaterThan(0);
     }
   },
+  async countFindingsByRun(v, o) {
+    expect((await countFindingsByRun(t.db, [inst(v)], [o.full.run.id])).size).toBe(0);
+    const mine = await countFindingsByRun(t.db, [inst(o)], [o.full.run.id]);
+    expect(mine.get(o.full.run.id)).toEqual({ high: 1 });
+    expect((await countFindingsByRun(t.db, [inst(o)], [])).size).toBe(0);
+  },
   async countSuppressedFindings(v, o) {
     expect(await countSuppressedFindings(t.db, [inst(v)], o.full.run.id)).toEqual({});
     expect(await countSuppressedFindings(t.db, [inst(o)], o.full.run.id)).toEqual({
@@ -219,6 +259,13 @@ const readCases: Record<string, ReadCase> = {
     const args = [o.tenant.repo.id, fingerprint!, headSha] as const;
     expect(await findPostedCommentByFingerprint(t.db, [inst(v)], ...args)).toBeUndefined();
     expect(await findPostedCommentByFingerprint(t.db, [inst(o)], ...args)).toBeDefined();
+  },
+  async listPostedFingerprints(v, o) {
+    const { fingerprint, headSha } = o.full.comment;
+    expect(await listPostedFingerprints(t.db, [inst(v)], o.tenant.repo.id, headSha)).toEqual([]);
+    expect(await listPostedFingerprints(t.db, [inst(o)], o.tenant.repo.id, headSha)).toEqual([
+      fingerprint,
+    ]);
   },
   async listFeedback(v, o) {
     expect(await listFeedback(t.db, [inst(v)], o.full.finding.id)).toEqual([]);
@@ -241,6 +288,80 @@ const readCases: Record<string, ReadCase> = {
     expect(mine.items.length).toBeGreaterThan(0);
     expect(mine.items.every((e) => e.installationId === inst(v))).toBe(true);
     expect((await listAuditLog(t.db, [inst(v)], { installationId: inst(o) })).items).toEqual([]);
+  },
+  async listAuditEntries(v, o) {
+    const mine = await listAuditEntries(t.db, [inst(v)], { installationId: inst(v) });
+    expect(mine.items.length).toBeGreaterThan(0);
+    expect(mine.items.every((e) => e.entry.installationId === inst(v))).toBe(true);
+    expect((await listAuditEntries(t.db, [inst(v)], { installationId: inst(o) })).items).toEqual(
+      [],
+    );
+    expect(
+      (await listAuditEntries(t.db, [inst(o)], { installationId: inst(o) })).items.length,
+    ).toBeGreaterThan(0);
+  },
+  async listFindingsWithRuns(v, o) {
+    const mine = await listFindingsWithRuns(t.db, [inst(v)], { status: "all" });
+    expect(mine.items.length).toBeGreaterThan(0);
+    expect(mine.items.every((r) => r.finding.installationId === inst(v))).toBe(true);
+    const asked = { repoIds: [o.tenant.repo.id], status: "all" } as const;
+    expect((await listFindingsWithRuns(t.db, [inst(v)], asked)).items).toEqual([]);
+    expect(
+      (await listFindingsWithRuns(t.db, [inst(v)], { runId: o.full.run.id, status: "all" })).items,
+    ).toEqual([]);
+    expect(
+      (await listFindingsWithRuns(t.db, [inst(o)], { runId: o.full.run.id, status: "all" })).items
+        .length,
+    ).toBeGreaterThan(0);
+    expect((await listFindingsWithRuns(t.db, [], {})).items).toEqual([]);
+  },
+  async getFindingWithRun(v, o) {
+    expect(await getFindingWithRun(t.db, [inst(v)], o.full.finding.id)).toBeUndefined();
+    expect((await getFindingWithRun(t.db, [inst(o)], o.full.finding.id))?.run.id).toBe(
+      o.full.run.id,
+    );
+  },
+  async summarizeFeedback(v, o) {
+    const id = o.full.finding.id;
+    const user = o.tenant.user.id;
+    const theirs = await summarizeFeedback(t.db, [inst(v)], [id], user);
+    expect(theirs.get(id)).toEqual({ useful: 0, false_positive: 0, known: 0, mine: null });
+    const own = await summarizeFeedback(t.db, [inst(o)], [id], user);
+    expect(own.get(id)).toMatchObject({ useful: 1, mine: { verdict: "useful" } });
+  },
+  async findInlineCommentIds(v, o) {
+    const keys = [{ runId: o.full.run.id, fingerprint: o.full.finding.fingerprint }];
+    expect((await findInlineCommentIds(t.db, [inst(v)], keys)).size).toBe(0);
+    expect((await findInlineCommentIds(t.db, [inst(o)], keys)).size).toBe(1);
+  },
+  async listPullHistory(v, o) {
+    const pr = o.full.run.prNumber;
+    expect((await listPullHistory(t.db, [inst(v)], o.tenant.repo.id, pr)).runs).toEqual([]);
+    expect(
+      (await listPullHistory(t.db, [inst(o)], o.tenant.repo.id, pr)).runs.length,
+    ).toBeGreaterThan(0);
+  },
+  async analyticsSummary(v, o) {
+    const scope = {
+      repoIds: [o.tenant.repo.id],
+      from: new Date(Date.now() - 86_400_000),
+      to: new Date(Date.now() + 86_400_000),
+    };
+    const theirs = await analyticsSummary(t.db, [inst(v)], scope);
+    expect(theirs.reviews.total).toBe(0);
+    expect(theirs.usage).toEqual([]);
+    expect(theirs.feedback.votes).toBe(0);
+    expect((await analyticsSummary(t.db, [inst(o)], scope)).reviews.total).toBeGreaterThan(0);
+    expect((await analyticsSummary(t.db, [], scope)).reviews.total).toBe(0);
+  },
+  async analyticsTimeseries(v, o) {
+    const scope = {
+      repoIds: [o.tenant.repo.id],
+      from: new Date(Date.now() - 86_400_000),
+      to: new Date(Date.now() + 86_400_000),
+    };
+    expect(await analyticsTimeseries(t.db, [inst(v)], scope, "day")).toEqual([]);
+    expect((await analyticsTimeseries(t.db, [inst(o)], scope, "day")).length).toBeGreaterThan(0);
   },
 };
 
@@ -298,6 +419,15 @@ const writeCases: Record<string, WriteCase> = {
     expect((await getRepoSettings(t.db, [inst(v)], v.tenant.repo.id))?.config).toEqual({
       fork_prs: "review",
     });
+  },
+  async upsertInstallationSettings(a, v) {
+    await rejects(upsertInstallationSettings(t.db, "nope", { provider: "openai" }));
+    // Acting on its own installation never touches the victim's row.
+    await upsertInstallationSettings(t.db, inst(a), { provider: "openai" });
+    expect((await getInstallationSettings(t.db, [inst(v)], inst(v)))?.config).toEqual({
+      provider: "deepseek",
+    });
+    await upsertInstallationSettings(t.db, inst(a), { provider: "deepseek" });
   },
   async createRun(a, v) {
     const input = {
@@ -360,6 +490,26 @@ const writeCases: Record<string, WriteCase> = {
       }),
     );
     expect(await listPostedComments(t.db, [inst(v)], v.full.run.id)).toHaveLength(1);
+  },
+  async recordPostedComments(a, v) {
+    await rejects(
+      recordPostedComments(t.db, inst(a), v.full.run.id, [
+        { kind: "summary", githubId: 1, headSha: v.full.run.headSha },
+      ]),
+    );
+    expect(await listPostedComments(t.db, [inst(v)], v.full.run.id)).toHaveLength(1);
+  },
+  async markRunFindingsPosted(a, v) {
+    const f = (await getFinding(t.db, [inst(v)], v.unpostedFindingId))!;
+    const keys = [{ agent: f.agent, fingerprint: f.fingerprint }];
+    expect(await markRunFindingsPosted(t.db, inst(a), v.queuedRun.id, keys)).toBe(0);
+    expect((await getFinding(t.db, [inst(v)], v.unpostedFindingId))?.posted).toBe(false);
+  },
+  async suppressRunFindings(a, v) {
+    const f = (await getFinding(t.db, [inst(v)], v.unpostedFindingId))!;
+    const keys = [{ agent: f.agent, fingerprint: f.fingerprint }];
+    expect(await suppressRunFindings(t.db, inst(a), v.queuedRun.id, keys, "invalid_line")).toBe(0);
+    expect((await getFinding(t.db, [inst(v)], v.unpostedFindingId))?.suppressedReason).toBeNull();
   },
   async setFeedback(a, v) {
     await rejects(

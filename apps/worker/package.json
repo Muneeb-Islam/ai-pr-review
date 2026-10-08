@@ -3,15 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Queue worker: connects to Redis and idles (review jobs arrive in Phase 8)",
+  "description": "Queue worker: executes review runs from the BullMQ queue (claim, context, review engine, persistence), recovers stuck runs; decrypts provider credentials; rotates the encryption key",
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
-    "build": "node ../../scripts/build-node.mjs",
+    "build": "node ../../scripts/build-node.mjs && node ../../scripts/build-node.mjs scripts/rotate-credentials.ts dist/rotate-credentials.js && node ../../scripts/build-node.mjs scripts/revoke-credentials.ts dist/revoke-credentials.js",
     "start": "node --env-file-if-exists=../../.env dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "credentials:rotate": "tsx --env-file-if-exists=../../.env scripts/rotate-credentials.ts",
+    "credentials:revoke": "tsx --env-file-if-exists=../../.env scripts/revoke-credentials.ts"
   },
   "dependencies": {
+    "@ai-pr-review/core": "*",
+    "@ai-pr-review/db": "*",
+    "@ai-pr-review/queue": "*",
     "@ai-pr-review/shared": "*",
-    "ioredis": "^5.0.0"
+    "ioredis": "^5.0.0",
+    "zod": "^4.6.5"
   }
 }

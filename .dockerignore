@@ -1,0 +1,26 @@
+# Everything the image build does not need. Secrets above all: no .env, no secrets directory, no keys.
+.git
+.github
+node_modules
+**/node_modules
+**/dist
+**/coverage
+**/test-results
+**/playwright-report
+**/*.tsbuildinfo
+apps/web/e2e/.state
+.env
+.env.*
+!.env.example
+secrets
+*.pem
+*.key
+*.log
+docs
+phases
+demo
+.claude
+.vscode
+.idea
+*.md
+!packages/**/README.md

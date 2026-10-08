@@ -1,13 +1,18 @@
 import { parse as parseYaml, YAMLParseError } from "yaml";
-import type { z } from "zod";
 import { REPO_CONFIG_PATH } from "../constants";
 import {
   configSchema,
+  limitsSchema,
+  PROVIDERS,
   repoConfigSchema,
   SENSITIVE_CONFIG_KEYS,
+  type Limits,
   type RepoConfig,
   type ResolvedConfig,
 } from "./schema";
+import { formatIssues } from "./validate";
+
+export { configLeafPaths, formatIssues, validateDashboardConfig } from "./validate";
 
 export class ConfigError extends Error {
   constructor(
@@ -51,36 +56,19 @@ function deepMerge(base: RawConfig, over: RawConfig): RawConfig {
   return out;
 }
 
+/**
+ * Merges dashboard layers, lowest priority first (installation defaults, then the repository's settings), the
+ * way `resolveEffectiveSettings` does, but returns the raw merged layer: the input of `collectContext`, which
+ * adds the repository file and validates the result.
+ */
+export function mergeDashboardLayers(...layers: RawConfig[]): RawConfig {
+  return layers.reduce<RawConfig>((acc, layer) => deepMerge(acc, dropNulls(layer)), {});
+}
+
 /** `base_url:` with no value parses as null; treat a null as unset. */
 function dropNulls(raw: RawConfig): RawConfig {
   const out: RawConfig = {};
   for (const [key, value] of Object.entries(raw)) if (value !== null) out[key] = value;
-  return out;
-}
-
-function valueAt(raw: unknown, path: PropertyKey[]): unknown {
-  let cur: unknown = raw;
-  for (const key of path) {
-    if (typeof cur !== "object" || cur === null) return undefined;
-    cur = (cur as Record<PropertyKey, unknown>)[key];
-  }
-  return cur;
-}
-
-export function formatIssues(issues: z.core.$ZodIssue[], raw: unknown): string[] {
-  const out: string[] = [];
-  for (const issue of issues) {
-    const base = issue.path.map(String);
-    if (issue.code === "unrecognized_keys") {
-      for (const key of issue.keys) {
-        out.push(`${[...base, key].join(".")}: unknown key`);
-      }
-      continue;
-    }
-    const key = base.join(".") || "(root)";
-    const isMissing = valueAt(raw, issue.path) === undefined;
-    out.push(isMissing ? `${key}: required` : `${key}: ${issue.message}`);
-  }
   return out;
 }
 
@@ -132,4 +120,57 @@ export function resolveRepoConfig(dashboard: RawConfig = {}): RepoConfig {
     `Invalid configuration:\n${problems.map((p) => `  - ${p}`).join("\n")}`,
     problems,
   );
+}
+
+/**
+ * Applies a settings PATCH to the stored dashboard layer: mappings merge key by key, arrays and scalars are
+ * replaced, and `null` removes a key (back to the inherited or default value). Empty mappings disappear.
+ */
+export function applyConfigPatch(stored: RawConfig, patch: RawConfig): RawConfig {
+  const out: RawConfig = { ...stored };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete out[key];
+    } else if (isPlainObject(value)) {
+      const existing = out[key];
+      const merged = applyConfigPatch(isPlainObject(existing) ? existing : {}, value);
+      if (Object.keys(merged).length === 0) delete out[key];
+      else out[key] = merged;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/** The configuration a repository would run with, as the settings API reports it (provider and model may be unset). */
+export interface EffectiveSettings extends RepoConfig {
+  provider: (typeof PROVIDERS)[number] | null;
+  model: string | null;
+  base_url: string | null;
+  limits: Limits;
+}
+
+/**
+ * Effective settings from layers ordered lowest to highest priority (installation defaults, then the
+ * repository's dashboard settings; the repo file is merged per run by `collectContext`, not here). Built-in defaults fill the rest.
+ * Throws `ConfigError` if the layers are invalid.
+ */
+export function resolveEffectiveSettings(...layers: RawConfig[]): EffectiveSettings {
+  const merged = layers.reduce<RawConfig>((acc, layer) => deepMerge(acc, dropNulls(layer)), {});
+  const repoPart = resolveRepoConfig(merged);
+  const limits = limitsSchema.safeParse(merged["limits"] ?? {});
+  const provider = PROVIDERS.find((p) => p === merged["provider"]) ?? null;
+  const model =
+    typeof merged["model"] === "string" && merged["model"] !== "" ? merged["model"] : null;
+  const baseUrl =
+    typeof merged["base_url"] === "string" && merged["base_url"] !== "" ? merged["base_url"] : null;
+  if (!limits.success) {
+    const problems = formatIssues(limits.error.issues, merged["limits"]).map((p) => `limits.${p}`);
+    throw new ConfigError(
+      `Invalid configuration:\n${problems.map((p) => `  - ${p}`).join("\n")}`,
+      problems,
+    );
+  }
+  return { ...repoPart, provider, model, base_url: baseUrl, limits: limits.data };
 }

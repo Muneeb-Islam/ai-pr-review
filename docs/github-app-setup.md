@@ -1,6 +1,8 @@
 # GitHub App setup (development)
 
-How to register a development GitHub App, receive its webhooks on your machine, install it on a sandbox repository and check that a pull request produces a run. Design: `design.md` §4. Phase: `phases/phase-03-github-app-and-webhooks.md`.
+How to register a development GitHub App, receive its webhooks on your machine, install it on a sandbox repository and check that a pull request produces a run. Design: `design.md` §4.
+
+**This page is for a development App.** The production App, its settings and its secrets are in [operations.md](operations.md), sections 3 and 4.
 
 You need a GitHub account (or an organization you own), the repo running locally (`npm run db:up`, `npm run db:migrate`) and Node.js 24.
 
@@ -8,15 +10,16 @@ You need a GitHub account (or an organization you own), the repo running locally
 
 Exactly this, nothing more (design §4):
 
-| Setting            | Value                                                                                                                                  |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Repository permissions | Metadata: read · Contents: read · Issues: **read** (required by GitHub for the `issue_comment` event) · Pull requests: **read & write** · Checks: **read & write** · Actions: read (coverage artifacts, Phase 11) |
-| Subscribe to events | `pull_request`, `issue_comment`, `check_run`. (`installation` and `installation_repositories` are always delivered to an App.)        |
-| Webhook URL        | Where GitHub can reach `POST /webhooks/github` (step 2)                                                                                |
-| Webhook secret     | A random string, the same value as `GITHUB_WEBHOOK_SECRET`                                                                             |
-| Webhook content type | `application/json` (the api rejects `application/x-www-form-urlencoded`)                                                               |
-| Callback URL       | `http://localhost:3000/auth/github/callback` (used by dashboard sign-in in Phase 4)                                                    |
-| Where installable  | "Only on this account" is fine for development                                                                                         |
+| Setting                  | Value                                                                                                                                                                                                                                                                                             |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repository permissions   | Metadata: read · Contents: read · Issues: **read** (required by GitHub for the `issue_comment` event) · Pull requests: **read & write** · Checks: **read & write** · Actions: read (coverage artifacts, Phase 11; without it the Test Coverage agent reports that coverage could not be measured) |
+| Organization permissions | Members: **read** (Phase 4: tells an organization owner from a member, so owners can manage installation-wide settings and keys; optional, see section 7)                                                                                                                                         |
+| Subscribe to events      | `pull_request`, `issue_comment`, `check_run`. (`installation` and `installation_repositories` are always delivered to an App.)                                                                                                                                                                    |
+| Webhook URL              | Where GitHub can reach `POST /webhooks/github` (step 2)                                                                                                                                                                                                                                           |
+| Webhook secret           | A random string, the same value as `GITHUB_WEBHOOK_SECRET`                                                                                                                                                                                                                                        |
+| Webhook content type     | `application/json` (the api rejects `application/x-www-form-urlencoded`)                                                                                                                                                                                                                          |
+| Callback URL             | `http://localhost:3000/auth/github/callback` (dashboard sign-in, Phase 4). It must equal `${API_PUBLIC_URL}/auth/github/callback`.                                                                                                                                                                |
+| Where installable        | "Only on this account" is fine for development                                                                                                                                                                                                                                                    |
 
 ## 2. Get webhooks to your machine
 
@@ -40,7 +43,7 @@ Anything sent to a smee channel is readable by whoever knows the URL. Use it for
 npm run github-app:register -- --webhook-url https://smee.io/<your-channel>
 ```
 
-Open the printed `http://127.0.0.1:8787/` page, confirm the App on GitHub, and return to the terminal. The script uses GitHub's [App manifest flow](https://docs.github.com/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) with the permissions and events above, exchanges the one-time code for the App's credentials and writes them to `.env.github-app` (git-ignored, owner-only). Copy the five `GITHUB_*` values into `.env`. App names are unique across all of GitHub; if "AI PR Review (dev)" is taken, pass `--name` (or edit the name on the GitHub confirmation page). Useful options: `--name`, `--org <slug>` (create under an organization), `--api-url`, `--port`, `--out`.
+Open the printed `http://127.0.0.1:8787/` page, confirm the App on GitHub, and return to the terminal. The script uses GitHub's [App manifest flow](https://docs.github.com/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) with the permissions and events above, exchanges the one-time code for the App's credentials and writes them to `.env.github-app` (git-ignored, owner-only). Copy the `GITHUB_*` values into `.env`. App names are unique across all of GitHub; if "AI PR Review (dev)" is taken, pass `--name` (or edit the name on the GitHub confirmation page). Useful options: `--name`, `--org <slug>` (create under an organization), `--api-url`, `--port`, `--out`.
 
 ### Option B: by hand
 
@@ -108,11 +111,60 @@ Note: the queued Check Run is created through the GitHub API with the App's cred
 
 ## Troubleshooting
 
-| Symptom                                          | Likely cause                                                                                                       |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| Every delivery is `401`                          | `GITHUB_WEBHOOK_SECRET` differs from the App's webhook secret, or a proxy rewrites the body.                       |
-| `415 Unsupported Media Type`                     | The App's webhook content type is `application/x-www-form-urlencoded`; switch to `application/json`.             |
-| Deliveries arrive but no run appears             | Check `webhook_deliveries.outcome`: `ignored:*` says why (draft, wrong action, inactive repository, …). A `skipped` run carries its reason in `status_reason`. |
-| Run created but no Check Run on the PR           | The run's `warnings` mention it; usually the App lacks "Checks: read & write", or the installation has not accepted new permissions. |
-| `/ai-review` does nothing                        | Only `OWNER`, `MEMBER` or `COLLABORATOR` may use it; the comment must start with `/ai-review`; edited comments do not count. |
-| The api exits at start naming `GITHUB_APP_*`     | The variable is missing or empty in `.env`.                                                                        |
+| Symptom                                      | Likely cause                                                                                                                                                   |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Every delivery is `401`                      | `GITHUB_WEBHOOK_SECRET` differs from the App's webhook secret, or a proxy rewrites the body.                                                                   |
+| `415 Unsupported Media Type`                 | The App's webhook content type is `application/x-www-form-urlencoded`; switch to `application/json`.                                                           |
+| Deliveries arrive but no run appears         | Check `webhook_deliveries.outcome`: `ignored:*` says why (draft, wrong action, inactive repository, …). A `skipped` run carries its reason in `status_reason`. |
+| Run created but no Check Run on the PR       | The run's `warnings` mention it; usually the App lacks "Checks: read & write", or the installation has not accepted new permissions.                           |
+| `/ai-review` does nothing                    | Only `OWNER`, `MEMBER` or `COLLABORATOR` may use it; the comment must start with `/ai-review`; edited comments do not count.                                   |
+| The api exits at start naming `GITHUB_APP_*` | The variable is missing or empty in `.env`.                                                                                                                    |
+
+## 7. Sign in and use the API (Phase 4)
+
+The dashboard screens arrive in Phase 10; until then the API is used from a browser and `curl`. Everything below is local development.
+
+**One-time setup**
+
+1. Generate the two secrets and add them to `.env`, together with the App's client id and secret from step 3:
+
+   ```bash
+   openssl rand -base64 48   # SESSION_SECRET
+   openssl rand -base64 32   # ENCRYPTION_KEY (back it up: without it stored provider keys cannot be read)
+   ```
+
+   The api refuses to start without `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `SESSION_SECRET` and `ENCRYPTION_KEY` (it names the missing ones, never their values).
+
+2. **An App registered before Phase 4** needs two edits on GitHub (Settings → Developer settings → GitHub Apps → your App):
+   - _Permissions & events_ → Organization permissions → **Members: Read-only**. The installation then asks the owner to accept the new permission. Without it everything works, but only the owner of a _personal_ account is an installation admin; in organizations, admins come from their repository permission instead, and installation-wide defaults and keys stay locked.
+   - _General_ → Callback URL `http://localhost:3000/auth/github/callback`. Keep **Expire user authorization tokens** on: the dashboard uses the user's token once, at sign-in, and never stores it.
+
+**Sign in**
+
+1. Make sure the sandbox repository from step 4 is installed and the api has seen it (an `installation` event, or any PR event).
+2. Open `http://localhost:3000/auth/github/login` in the browser and authorize. You land on `PUBLIC_URL/` (the dashboard stub). A session cookie `aipr_session` is set for `localhost`.
+3. In the browser's address bar, `http://localhost:3000/api/me` shows you, your installations and a `csrf_token`; `http://localhost:3000/api/repos` lists only repositories you can reach.
+
+**Set a provider key and change settings with curl**
+
+Copy the `aipr_session` cookie value from the browser's developer tools (Application → Cookies) and the `csrf_token` from `/api/me`. Put the key in a file so it does not end up in your shell history:
+
+```bash
+echo '{"provider":"deepseek","api_key":"<your key>"}' > key.json   # delete it afterwards
+H=(-H "cookie: aipr_session=<cookie value>" -H "x-csrf-token: <csrf_token>" -H "content-type: application/json")
+
+curl -s http://localhost:3000/api/repos "${H[@]}"                                  # note a repository id
+curl -s -X PUT http://localhost:3000/api/repos/<id>/credentials "${H[@]}" -d @key.json
+curl -s http://localhost:3000/api/repos/<id>/credentials "${H[@]}"                 # provider, last four characters, timestamp: never the key
+curl -s -X POST http://localhost:3000/api/repos/<id>/credentials/test "${H[@]}" -d @key.json   # one minimal provider call
+curl -s -X PATCH http://localhost:3000/api/repos/<id>/settings "${H[@]}"   -d '{"config":{"provider":"deepseek","model":"deepseek-flash","review":{"mode":"warn"}}}'
+curl -s http://localhost:3000/api/repos/<id>/settings "${H[@]}"                    # effective configuration
+```
+
+Writing needs repository admin on GitHub (you are one on your own sandbox). The model id above was current in DeepSeek's documentation in October 2026; check it before you rely on it.
+
+**Reference**
+
+- The OpenAPI document is `packages/shared/schemas/openapi.json` (regenerate with `npm run schema`; a test fails when it is stale). The web app's typed client is `apps/web/src/api.ts`, built from the same contract.
+- Sign-in problems end on `PUBLIC_URL/login?error=<code>`: `invalid_state` (the sign-in took longer than 10 minutes, or the cookie was lost: start again from `/auth/github/login`), `access_denied`, `invalid_code`, `github_unavailable`.
+- Your access (repositories and roles) is read from GitHub at sign-in and re-checked after `ACCESS_CACHE_TTL_SECONDS` (10 minutes by default), so a change on GitHub shows up without signing in again.
